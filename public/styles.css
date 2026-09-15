@@ -364,7 +364,7 @@ input[type="checkbox"] {
   right: 0;
   bottom: calc(var(--nav-h) + var(--safe-b));
   z-index: 60;
-  display: flex;
+  display: none;
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
@@ -373,6 +373,12 @@ input[type="checkbox"] {
   backdrop-filter: blur(12px);
   border-top: 1px solid rgba(255,255,255,0.08);
   box-shadow: 0 -8px 30px rgba(16, 35, 28, 0.25);
+}
+.player-bar.is-open {
+  display: flex;
+}
+.player-bar[hidden] {
+  display: none !important;
 }
 .player-meta { min-width: 0; flex: 1; }
 .player-title {
@@ -398,7 +404,7 @@ input[type="checkbox"] {
 .player-bar .ghost { color: #f7f4ea; }
 
 @media (min-width: 860px) {
-  .player-bar {
+  .player-bar.is-open {
     bottom: 0;
     left: 50%;
     right: auto;

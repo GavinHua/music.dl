@@ -214,6 +214,11 @@
             <select id="setting-quality" aria-label="默认音质"></select>
           </label>
           <label class="settings-field">
+            <span class="settings-label">下载并发数</span>
+            <span class="settings-desc">同时下载的歌曲数量，建议 1–4；过高可能被音源限流</span>
+            <input id="setting-concurrency" type="number" min="1" max="16" step="1" />
+          </label>
+          <label class="settings-field">
             <span class="settings-label">过滤词</span>
             <span class="settings-desc">歌名/歌手/专辑包含任一关键词则跳过下载（逗号或换行分隔），例如 Live、现场版</span>
             <textarea id="setting-filters" rows="4" placeholder="Live&#10;现场版&#10;伴奏"></textarea>

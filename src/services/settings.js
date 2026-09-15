@@ -8,6 +8,7 @@ const DEFAULTS = {
   preferredQuality: config.preferredQuality || 'flac',
   filterWords: config.filterWords || [],
   downloadTimeoutMs: config.downloadTimeoutMs || 5 * 60 * 1000,
+  downloadConcurrency: config.downloadConcurrency || 2,
 }
 
 export const QUALITY_OPTIONS = [
@@ -62,6 +63,10 @@ function applyRuntime(stored) {
     const n = Number(stored.downloadTimeoutMs)
     if (Number.isFinite(n) && n >= 30_000) config.downloadTimeoutMs = n
   }
+  if (stored.downloadConcurrency != null) {
+    const n = Number(stored.downloadConcurrency)
+    if (Number.isFinite(n) && n >= 1 && n <= 16) config.downloadConcurrency = Math.round(n)
+  }
 }
 
 export function getSettings() {
@@ -70,6 +75,7 @@ export function getSettings() {
     qualities: QUALITY_OPTIONS,
     filterWords: [...(config.filterWords || [])],
     downloadTimeoutMs: config.downloadTimeoutMs,
+    downloadConcurrency: config.downloadConcurrency,
   }
 }
 
@@ -87,6 +93,11 @@ export function updateSettings(patch = {}) {
     const n = Number(patch.downloadTimeoutMs)
     if (!Number.isFinite(n) || n < 30_000) throw new Error('超时时间至少 30 秒')
     next.downloadTimeoutMs = Math.round(n)
+  }
+  if (patch.downloadConcurrency != null) {
+    const n = Number(patch.downloadConcurrency)
+    if (!Number.isFinite(n) || n < 1 || n > 16) throw new Error('并发数需在 1–16')
+    next.downloadConcurrency = Math.round(n)
   }
   applyRuntime(next)
   writeFile(next)

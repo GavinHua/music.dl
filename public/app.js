@@ -151,6 +151,7 @@ async function playPreview(song) {
     $('#player-sub').textContent = `${data.singer || song.singer || ''} · ${data.sourceName || ''} @ ${data.quality || ''}`
     audio.src = data.streamPath
     bar.hidden = false
+    bar.classList.add('is-open')
     document.body.classList.add('has-player')
     await audio.play().catch(() => {})
   } catch (e) {
@@ -166,10 +167,14 @@ function closePlayer() {
     audio.load()
   }
   const bar = $('#player-bar')
-  if (bar) bar.hidden = true
+  if (bar) {
+    bar.hidden = true
+    bar.classList.remove('is-open')
+  }
   document.body.classList.remove('has-player')
 }
 $('#btn-player-close')?.addEventListener('click', closePlayer)
+$('#player-audio')?.addEventListener('ended', closePlayer)
 
 function selectedSongs(container) {
   return [...container.querySelectorAll('.item')]
@@ -893,7 +898,8 @@ async function loadSettings() {
     sel.value = data.preferredQuality || 'flac'
     $('#setting-filters').value = (data.filterWords || []).join('\n')
     $('#setting-timeout').value = Math.round((data.downloadTimeoutMs || 300000) / 1000)
-    $('#settings-msg').textContent = `当前音质 ${data.preferredQuality} · 过滤 ${(data.filterWords || []).length} 词 · 超时 ${Math.round((data.downloadTimeoutMs || 300000) / 1000)}s`
+    $('#setting-concurrency').value = data.downloadConcurrency || 2
+    $('#settings-msg').textContent = `当前音质 ${data.preferredQuality} · 并发 ${data.downloadConcurrency} · 过滤 ${(data.filterWords || []).length} 词 · 超时 ${Math.round((data.downloadTimeoutMs || 300000) / 1000)}s`
   } catch (e) {
     toast(e.message)
   }
@@ -903,11 +909,12 @@ $('#btn-settings-save')?.addEventListener('click', async () => {
     const preferredQuality = $('#setting-quality').value
     const filterWords = $('#setting-filters').value
     const downloadTimeoutMs = Number($('#setting-timeout').value) * 1000
+    const downloadConcurrency = Number($('#setting-concurrency').value)
     const data = await api('/settings', {
       method: 'PUT',
-      body: JSON.stringify({ preferredQuality, filterWords, downloadTimeoutMs }),
+      body: JSON.stringify({ preferredQuality, filterWords, downloadTimeoutMs, downloadConcurrency }),
     })
-    $('#settings-msg').textContent = `已保存：${data.preferredQuality} · 过滤 ${(data.filterWords || []).length} 词 · 超时 ${Math.round(data.downloadTimeoutMs / 1000)}s`
+    $('#settings-msg').textContent = `已保存：${data.preferredQuality} · 并发 ${data.downloadConcurrency} · 过滤 ${(data.filterWords || []).length} 词 · 超时 ${Math.round(data.downloadTimeoutMs / 1000)}s`
     toast('设置已保存')
   } catch (e) {
     toast(e.message)
