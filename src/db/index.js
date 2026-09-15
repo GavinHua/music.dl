@@ -121,13 +121,22 @@ export const sourcesRepo = {
 }
 
 export const libraryRepo = {
+  getById(id) {
+    const n = Number(id)
+    return getDb().prepare('SELECT * FROM library WHERE id = ?').get(Number.isFinite(n) ? n : id)
+  },
   findByKey(platform, songmid) {
     return getDb().prepare('SELECT * FROM library WHERE platform = ? AND songmid = ?').get(platform, songmid)
   },
   findByNameSinger(name, singer) {
+    const n = String(name || '').trim()
+    const s = String(singer || '').trim()
+    if (!n || !s) return []
     return getDb()
-      .prepare('SELECT * FROM library WHERE lower(name) = lower(?) AND lower(singer) = lower(?)')
-      .all(name, singer)
+      .prepare(
+        `SELECT * FROM library WHERE lower(trim(name)) = lower(?) AND lower(trim(singer)) = lower(?)`
+      )
+      .all(n, s)
   },
   list({ limit = 100, offset = 0, q = '' } = {}) {
     if (q) {
@@ -149,6 +158,25 @@ export const libraryRepo = {
   },
   removeByPath(filePath) {
     getDb().prepare('DELETE FROM library WHERE file_path = ?').run(filePath)
+  },
+  removeRelated(row) {
+    if (!row) return
+    const db = getDb()
+    const tx = db.transaction(() => {
+      if (row.id != null) db.prepare('DELETE FROM library WHERE id = ?').run(row.id)
+      if (row.file_path) db.prepare('DELETE FROM library WHERE file_path = ?').run(row.file_path)
+      if (row.platform && row.songmid) {
+        db.prepare('DELETE FROM library WHERE platform = ? AND songmid = ?').run(row.platform, String(row.songmid))
+      }
+      const name = String(row.name || '').trim()
+      const singer = String(row.singer || '').trim()
+      if (name && singer) {
+        db.prepare(
+          `DELETE FROM library WHERE lower(trim(name)) = lower(?) AND lower(trim(singer)) = lower(?)`
+        ).run(name, singer)
+      }
+    })
+    tx()
   },
   upsert(row) {
     getDb()

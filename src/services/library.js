@@ -60,41 +60,42 @@ export async function trackHasLyricAsync(row) {
   return hasEmbeddedLyric(abs)
 }
 
-export function decideDownload(musicInfo, targetQuality) {
-  const platform = musicInfo.source || musicInfo.platform
-  const songmid = String(musicInfo.songmid || musicInfo.hash || musicInfo.id || '')
-  if (!platform || !songmid) {
-    return { action: 'download', reason: 'no identity' }
-  }
+function libraryFileExists(row) {
+  if (!row?.file_path) return false
+  return fs.existsSync(absoluteMusicPath(row.file_path))
+}
 
-  const existing = libraryRepo.findByKey(platform, songmid)
-  if (!existing) {
-    // also check name+singer duplicates
-    const byName = libraryRepo.findByNameSinger(musicInfo.name, musicInfo.singer)
-    if (byName.length) {
-      const best = byName.sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality))[0]
-      if (qualityRank(best.quality) >= qualityRank(targetQuality)) {
-        const needLyric = !trackHasLyric(best)
-        return {
-          action: needLyric ? 'lyric_only' : 'skip',
-          existing: best,
-          reason: needLyric ? 'same track, missing lyric' : 'already have equal/higher quality',
-        }
-      }
-      return { action: 'upgrade', existing: best, reason: 'higher quality available' }
-    }
-    return { action: 'download', reason: 'new track' }
+function decideForExisting(existing, targetQuality) {
+  if (!libraryFileExists(existing)) {
+    return { action: 'download', existing, reason: '文件缺失，重新下载' }
   }
-
   if (qualityRank(existing.quality) >= qualityRank(targetQuality)) {
     const needLyric = !trackHasLyric(existing)
     return {
       action: needLyric ? 'lyric_only' : 'skip',
       existing,
-      reason: needLyric ? 'missing lyric' : 'already have equal/higher quality',
+      reason: needLyric ? '缺少歌词' : '已在曲库，音质相同或更高（删记录后可重下）',
     }
   }
-  return { action: 'upgrade', existing, reason: 'higher quality available' }
+  return { action: 'upgrade', existing, reason: '可升级音质' }
+}
+
+export function decideDownload(musicInfo, targetQuality) {
+  const platform = musicInfo.source || musicInfo.platform
+  const songmid = String(musicInfo.songmid || musicInfo.hash || musicInfo.id || '')
+  if (!platform || !songmid) {
+    return { action: 'download', reason: 'new track' }
+  }
+
+  const existing = libraryRepo.findByKey(platform, songmid)
+  if (existing) return decideForExisting(existing, targetQuality)
+
+  const byName = libraryRepo.findByNameSinger(musicInfo.name, musicInfo.singer)
+  if (byName.length) {
+    const best = byName.sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality))[0]
+    return decideForExisting(best, targetQuality)
+  }
+  return { action: 'download', reason: 'new track' }
 }
 
 export function absoluteMusicPath(rel) {

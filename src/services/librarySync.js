@@ -101,7 +101,7 @@ export async function findMissingLyrics({ limit = 500 } = {}) {
 }
 
 export function deleteLibraryEntry(id, { deleteFile = false } = {}) {
-  const row = libraryRepo.all().find((r) => String(r.id) === String(id))
+  const row = libraryRepo.getById(id) || libraryRepo.all().find((r) => String(r.id) === String(id))
   if (!row) return false
   if (deleteFile && row.file_path) {
     const abs = absoluteMusicPath(row.file_path)
@@ -110,7 +110,6 @@ export function deleteLibraryEntry(id, { deleteFile = false } = {}) {
         fs.unlinkSync(abs)
       } catch {}
     }
-    // also remove legacy sidecar if present
     if (row.lyric_path && row.lyric_path !== LYRIC_EMBEDDED) {
       const lyricAbs = absoluteMusicPath(row.lyric_path)
       if (fs.existsSync(lyricAbs)) {
@@ -120,7 +119,7 @@ export function deleteLibraryEntry(id, { deleteFile = false } = {}) {
       }
     }
   }
-  libraryRepo.remove(row.id)
+  libraryRepo.removeRelated(row)
   return true
 }
 
