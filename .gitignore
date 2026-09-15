@@ -7,4 +7,3 @@ data/
 *.part
 npm-debug.log*
 .idea
-source
