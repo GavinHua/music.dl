@@ -1,0 +1,20 @@
+services:
+  app:
+    build: .
+    container_name: music-dl
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ./source:/app/source
+      - ./data:/app/data
+    environment:
+      - PORT=8000
+      - PREFERRED_QUALITY=${PREFERRED_QUALITY:-flac}
+      - DOWNLOAD_CONCURRENCY=${DOWNLOAD_CONCURRENCY:-2}
+      - TG_BOT_TOKEN=${TG_BOT_TOKEN:-}
+      - TG_ALLOWED_IDS=${TG_ALLOWED_IDS:-}
+      - ALLOW_UNSAFE_VM=${ALLOW_UNSAFE_VM:-true}
+      - DATA_PATH=/app/data
+      - MUSIC_PATH=/app/data/music
+      - SOURCE_PATH=/app/source

@@ -1,0 +1,28 @@
+{
+  "name": "music.dl",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "LX Music style download service (Node.js)",
+  "scripts": {
+    "start": "tsx src/index.js",
+    "dev": "tsx watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "crypto-js": "^4.2.0",
+    "express": "^4.21.2",
+    "flac-tagger": "^2.0.0",
+    "grammy": "^1.35.0",
+    "multer": "^1.4.5-lts.1",
+    "needle": "^3.3.1",
+    "node-id3": "^0.2.9",
+    "socks-proxy-agent": "^8.0.5",
+    "tsx": "^4.19.3",
+    "tunnel": "^0.0.6",
+    "vm2": "^3.9.19"
+  }
+}

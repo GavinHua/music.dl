@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0c1f1a" />
+  <title>music.dl</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="ambient" aria-hidden="true"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <h1>music.dl</h1>
+          <p class="tagline">LX 音源下载</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button type="button" class="ghost" id="btn-goto-jobs" title="任务">
+          <span class="ico" aria-hidden="true">◷</span>
+          <span class="hide-sm">任务</span>
+        </button>
+      </div>
+    </header>
+
+    <nav class="side-nav" aria-label="主导航">
+      <button data-tab="search" class="nav-btn active"><span class="ico">⌕</span><span>搜索</span></button>
+      <button data-tab="playlist" class="nav-btn"><span class="ico">☰</span><span>歌单</span></button>
+      <button data-tab="artist" class="nav-btn"><span class="ico">♫</span><span>歌手</span></button>
+      <button data-tab="board" class="nav-btn"><span class="ico">▲</span><span>榜单</span></button>
+      <button data-tab="jobs" class="nav-btn"><span class="ico">◷</span><span>任务</span></button>
+      <button data-tab="sources" class="nav-btn"><span class="ico">◈</span><span>音源</span></button>
+      <button data-tab="library" class="nav-btn"><span class="ico">▣</span><span>曲库</span></button>
+      <button data-tab="settings" class="nav-btn"><span class="ico">⚙</span><span>设置</span></button>
+    </nav>
+
+    <main class="content">
+      <section id="tab-search" class="panel active">
+        <div class="panel-head">
+          <h2>搜索</h2>
+          <p>按关键词找歌，勾选后批量下载</p>
+        </div>
+        <div class="toolbar sticky-bar">
+          <div class="field grow">
+            <input id="search-keyword" placeholder="歌曲 / 歌手" enterkeyhint="search" autocomplete="off" />
+          </div>
+          <select id="search-source" aria-label="平台">
+            <option value="kw">酷我</option>
+            <option value="wy">网易</option>
+            <option value="tx">QQ</option>
+            <option value="kg">酷狗</option>
+            <option value="mg">咪咕</option>
+            <option value="all">全部</option>
+          </select>
+          <button type="button" id="btn-search" class="primary">搜索</button>
+          <button type="button" id="btn-dl-selected">下载选中</button>
+        </div>
+        <div id="search-result" class="list"></div>
+      </section>
+
+      <section id="tab-playlist" class="panel">
+        <div class="panel-head">
+          <h2>歌单</h2>
+          <p>浏览广场，或粘贴链接直接打开</p>
+        </div>
+        <div class="toolbar sticky-bar">
+          <select id="pl-source" aria-label="平台">
+            <option value="kw">酷我</option>
+            <option value="wy">网易</option>
+            <option value="tx">QQ</option>
+            <option value="kg">酷狗</option>
+            <option value="mg">咪咕</option>
+          </select>
+          <select id="pl-sort" aria-label="排序">
+            <option value="hot">最热</option>
+            <option value="new">最新</option>
+          </select>
+          <button type="button" id="btn-pl-browse">浏览广场</button>
+          <div class="field grow">
+            <input id="pl-search" placeholder="搜索歌单名" enterkeyhint="search" />
+          </div>
+          <button type="button" id="btn-pl-search">搜歌单</button>
+        </div>
+        <div class="toolbar soft">
+          <div class="field grow">
+            <input id="playlist-input" placeholder="粘贴歌单 URL 或 platform:id" />
+          </div>
+          <button type="button" id="btn-playlist-load">打开</button>
+          <button type="button" id="btn-playlist-dl" class="primary">整单下载</button>
+        </div>
+        <div id="pl-tags" class="chips"></div>
+        <div id="pl-lists" class="list"></div>
+      </section>
+
+      <section id="tab-artist" class="panel">
+        <div class="panel-head">
+          <h2>歌手</h2>
+          <p>搜索歌手并下载其作品</p>
+        </div>
+        <div class="toolbar sticky-bar">
+          <div class="field grow">
+            <input id="artist-keyword" placeholder="歌手名" enterkeyhint="search" />
+          </div>
+          <select id="artist-source" aria-label="平台">
+            <option value="wy">网易</option>
+            <option value="tx">QQ</option>
+          </select>
+          <button type="button" id="btn-artist-search" class="primary">搜歌手</button>
+        </div>
+        <div id="artist-result" class="list"></div>
+      </section>
+
+      <section id="tab-board" class="panel">
+        <div class="panel-head">
+          <h2>排行榜</h2>
+          <p>平台官方榜单一键入库</p>
+        </div>
+        <div class="toolbar sticky-bar">
+          <select id="board-source" aria-label="平台">
+            <option value="kw">酷我</option>
+            <option value="wy">网易</option>
+            <option value="tx">QQ</option>
+            <option value="kg">酷狗</option>
+            <option value="mg">咪咕</option>
+          </select>
+          <button type="button" id="btn-board-load" class="primary">加载榜单</button>
+        </div>
+        <div id="board-list" class="list"></div>
+      </section>
+
+      <section id="tab-jobs" class="panel">
+        <div class="panel-head">
+          <h2>任务</h2>
+          <p>下载队列与进度</p>
+        </div>
+        <div class="toolbar sticky-bar jobs-toolbar">
+          <button type="button" id="btn-jobs-refresh">刷新</button>
+          <button type="button" id="btn-jobs-clear">清理已完成</button>
+          <label class="switch">
+            <input type="checkbox" id="jobs-auto" checked />
+            <span class="switch-ui" aria-hidden="true"></span>
+            <span class="switch-label">自动刷新</span>
+          </label>
+        </div>
+        <div id="jobs-result" class="list"></div>
+        <div id="job-detail" class="list"></div>
+      </section>
+
+      <section id="tab-sources" class="panel">
+        <div class="panel-head">
+          <h2>音源</h2>
+          <p>管理 LX 自定义音源脚本</p>
+        </div>
+        <div class="toolbar sticky-bar wrap">
+          <button type="button" id="btn-sources-reload">重新加载</button>
+          <div class="field grow">
+            <input id="source-url" placeholder="从 URL 导入音源脚本" />
+          </div>
+          <button type="button" id="btn-source-import" class="primary">导入 URL</button>
+          <label class="file-btn">
+            上传 .js
+            <input type="file" id="source-file" accept=".js,text/javascript" hidden />
+          </label>
+        </div>
+        <div id="sources-result" class="list"></div>
+      </section>
+
+      <section id="tab-library" class="panel">
+        <div class="panel-head">
+          <h2>曲库</h2>
+          <p>已下载曲目、缺词扫描与磁盘同步</p>
+        </div>
+        <div class="toolbar sticky-bar">
+          <div class="field grow">
+            <input id="library-q" placeholder="搜索已下载" enterkeyhint="search" />
+          </div>
+          <button type="button" id="btn-library" class="primary">查询</button>
+          <button type="button" id="btn-library-sync">同步磁盘</button>
+        </div>
+        <div class="subpanel">
+          <div class="subpanel-head">
+            <div>
+              <h3>缺少歌词</h3>
+              <p class="hint" style="margin:0">扫描音频标签中未内嵌歌词的曲目</p>
+            </div>
+            <div class="row-actions">
+              <button type="button" id="btn-scan-lyrics">扫描</button>
+              <button type="button" id="btn-fill-lyrics" class="primary">全部补歌词</button>
+            </div>
+          </div>
+          <div id="missing-lyrics-msg" class="hint"></div>
+          <div id="missing-lyrics-result" class="list"></div>
+        </div>
+        <div id="library-sync-msg" class="hint"></div>
+        <div id="library-result" class="list"></div>
+      </section>
+
+      <section id="tab-settings" class="panel">
+        <div class="panel-head">
+          <h2>设置</h2>
+          <p>下载偏好与运行参数</p>
+        </div>
+        <div class="settings-card">
+          <label class="settings-field">
+            <span class="settings-label">默认下载音质</span>
+            <span class="settings-desc">新任务未指定音质时使用此项；已存在更低音质会升级</span>
+            <select id="setting-quality" aria-label="默认音质"></select>
+          </label>
+          <div class="row-actions">
+            <button type="button" id="btn-settings-save" class="primary">保存</button>
+          </div>
+          <div id="settings-msg" class="hint"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <nav class="bottom-nav" aria-label="移动导航">
+    <button data-tab="search" class="nav-btn active"><span class="ico">⌕</span><span>搜索</span></button>
+    <button data-tab="playlist" class="nav-btn"><span class="ico">☰</span><span>歌单</span></button>
+    <button data-tab="artist" class="nav-btn"><span class="ico">♫</span><span>歌手</span></button>
+    <button data-tab="board" class="nav-btn"><span class="ico">▲</span><span>榜单</span></button>
+    <button data-tab="jobs" class="nav-btn"><span class="ico">◷</span><span>任务</span></button>
+    <button data-tab="more" class="nav-btn" id="btn-more-menu"><span class="ico">···</span><span>更多</span></button>
+  </nav>
+
+  <div id="more-sheet" class="sheet" hidden>
+    <div class="sheet-backdrop" data-close-sheet></div>
+    <div class="sheet-panel" role="dialog" aria-label="更多">
+      <button data-tab="sources" class="sheet-item"><span class="ico">◈</span>音源</button>
+      <button data-tab="library" class="sheet-item"><span class="ico">▣</span>曲库</button>
+      <button data-tab="settings" class="sheet-item"><span class="ico">⚙</span>设置</button>
+      <button type="button" class="sheet-item muted" data-close-sheet>关闭</button>
+    </div>
+  </div>
+
+  <div id="detail-sheet" class="sheet detail-sheet" hidden>
+    <div class="sheet-backdrop" data-close-detail></div>
+    <div class="sheet-panel detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+      <header class="detail-head">
+        <button type="button" class="ghost" data-close-detail aria-label="关闭">←</button>
+        <div class="detail-titles">
+          <h3 id="detail-title">详情</h3>
+          <p id="detail-sub" class="hint"></p>
+        </div>
+        <button type="button" id="btn-detail-dl" class="primary">下载全部</button>
+      </header>
+      <div class="detail-toolbar">
+        <button type="button" id="btn-detail-dl-selected">下载选中</button>
+        <label class="switch compact">
+          <input type="checkbox" id="detail-check-all" />
+          <span class="switch-ui" aria-hidden="true"></span>
+          <span class="switch-label">全选</span>
+        </label>
+      </div>
+      <div id="detail-body" class="list detail-body"></div>
+    </div>
+  </div>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
