@@ -156,7 +156,7 @@
       <section id="tab-sources" class="panel">
         <div class="panel-head">
           <h2>音源</h2>
-          <p>管理 LX 自定义音源脚本</p>
+          <p>排序靠前的优先用于解析；可单独测试连接</p>
         </div>
         <div class="toolbar sticky-bar wrap">
           <button type="button" id="btn-sources-reload">重新加载</button>
@@ -205,13 +205,23 @@
       <section id="tab-settings" class="panel">
         <div class="panel-head">
           <h2>设置</h2>
-          <p>下载偏好与运行参数</p>
+          <p>下载偏好、过滤词与超时</p>
         </div>
         <div class="settings-card">
           <label class="settings-field">
             <span class="settings-label">默认下载音质</span>
             <span class="settings-desc">新任务未指定音质时使用此项；已存在更低音质会升级</span>
             <select id="setting-quality" aria-label="默认音质"></select>
+          </label>
+          <label class="settings-field">
+            <span class="settings-label">过滤词</span>
+            <span class="settings-desc">歌名/歌手/专辑包含任一关键词则跳过下载（逗号或换行分隔），例如 Live、现场版</span>
+            <textarea id="setting-filters" rows="4" placeholder="Live&#10;现场版&#10;伴奏"></textarea>
+          </label>
+          <label class="settings-field">
+            <span class="settings-label">单文件下载超时（秒）</span>
+            <span class="settings-desc">超时后失败并尝试其他音源；默认 300 秒（5 分钟）</span>
+            <input id="setting-timeout" type="number" min="30" step="30" />
           </label>
           <div class="row-actions">
             <button type="button" id="btn-settings-save" class="primary">保存</button>
@@ -265,6 +275,16 @@
   </div>
 
   <div id="toast" role="status" aria-live="polite"></div>
+
+  <div id="player-bar" class="player-bar" hidden>
+    <div class="player-meta">
+      <div id="player-title" class="player-title">—</div>
+      <div id="player-sub" class="player-sub"></div>
+    </div>
+    <audio id="player-audio" controls preload="none"></audio>
+    <button type="button" class="ghost" id="btn-player-close" aria-label="关闭试听">✕</button>
+  </div>
+
   <script src="/app.js"></script>
 </body>
 </html>

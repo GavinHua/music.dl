@@ -191,6 +191,11 @@ export async function importSourceUpload(originalName, content) {
   return sourcesRepo.get(id)
 }
 
+export async function testSource(id, opts = {}) {
+  const { testSourceConnection } = await import('./preview.js')
+  return testSourceConnection(id, opts)
+}
+
 export function deleteSource(id) {
   const row = sourcesRepo.get(id)
   if (!row) return false

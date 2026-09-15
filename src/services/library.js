@@ -19,14 +19,24 @@ export function sanitizePathPart(name, fallback = 'Unknown') {
   return s || fallback
 }
 
+/** Take the first artist when multiple are joined (/, 、, ,, &, …). */
+export function primarySinger(singer) {
+  const raw = String(singer || '').trim()
+  if (!raw) return ''
+  const first = raw.split(/[/／|｜、,，;&＋+]+/)[0].trim()
+  return first || raw
+}
+
 export function buildRelativePath(musicInfo, quality, ext) {
-  const singer = sanitizePathPart(musicInfo.singer || musicInfo.artist, 'Unknown')
+  const fullSinger = musicInfo.singer || musicInfo.artist || ''
+  const singerDir = sanitizePathPart(primarySinger(fullSinger), 'Unknown')
   const album = sanitizePathPart(musicInfo.albumName || musicInfo.album || 'Single', 'Single')
   const title = sanitizePathPart(musicInfo.name || musicInfo.songname, 'Unknown')
   const qTag = sanitizePathPart(quality || 'unknown', 'unknown')
-  // Name - Singer - quality - album.ext
-  const filename = `${title} - ${singer} - ${qTag} - ${album}.${ext}`
-  return path.join(singer, album, filename)
+  const singerLabel = sanitizePathPart(fullSinger || singerDir, 'Unknown')
+  // Name - Singer - quality - album.ext  (folder uses primary singer only)
+  const filename = `${title} - ${singerLabel} - ${qTag} - ${album}.${ext}`
+  return path.join(singerDir, album, filename)
 }
 
 export function extFromUrlOrQuality(url, quality) {

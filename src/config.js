@@ -20,6 +20,13 @@ export const config = {
   dbPath: process.env.DB_PATH || path.join(root, 'data', 'app.db'),
   preferredQuality: process.env.PREFERRED_QUALITY || 'flac',
   downloadConcurrency: Number(process.env.DOWNLOAD_CONCURRENCY || 2),
+  /** Per-file download timeout (ms). Default 5 minutes. */
+  downloadTimeoutMs: Number(process.env.DOWNLOAD_TIMEOUT_MS || 5 * 60 * 1000),
+  /** Title/singer/album filter words — songs containing any are skipped. */
+  filterWords: (process.env.FILTER_WORDS || '')
+    .split(/[,，\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean),
   tgBotToken: process.env.TG_BOT_TOKEN || '',
   tgAllowedIds: (process.env.TG_ALLOWED_IDS || '')
     .split(',')

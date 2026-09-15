@@ -205,11 +205,12 @@ export const jobsRepo = {
   addItem(item) {
     const info = getDb()
       .prepare(
-        `INSERT INTO job_items (job_id, platform, songmid, name, singer, album, quality, status, music_info)
-         VALUES (@job_id, @platform, @songmid, @name, @singer, @album, @quality, @status, @music_info)`
+        `INSERT INTO job_items (job_id, platform, songmid, name, singer, album, quality, status, message, music_info)
+         VALUES (@job_id, @platform, @songmid, @name, @singer, @album, @quality, @status, @message, @music_info)`
       )
       .run({
         status: 'pending',
+        message: '',
         album: '',
         quality: '',
         music_info: '{}',

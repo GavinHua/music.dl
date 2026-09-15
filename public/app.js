@@ -99,6 +99,7 @@ function songItemHtml(s, { checkable = true } = {}) {
       <div class="sub"><span class="badge">${escapeHtml(source)}</span>${escapeHtml(s.singer || '')} · ${escapeHtml(s.albumName || s.album || '')}</div>
     </div>
     <div class="actions">
+      <button type="button" class="btn-preview">试听</button>
       <button type="button" class="btn-one-dl primary">下载</button>
     </div>
   </div>`
@@ -128,7 +129,47 @@ function bindSongList(container) {
       }
     })
   })
+  container.querySelectorAll('.btn-preview').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const item = btn.closest('.item')
+      const song = JSON.parse(item.dataset.json)
+      await playPreview(song)
+    })
+  })
 }
+
+async function playPreview(song) {
+  try {
+    toast('解析试听地址…')
+    const data = await api('/preview', {
+      method: 'POST',
+      body: JSON.stringify({ musicInfo: song }),
+    })
+    const audio = $('#player-audio')
+    const bar = $('#player-bar')
+    $('#player-title').textContent = data.name || song.name || '试听'
+    $('#player-sub').textContent = `${data.singer || song.singer || ''} · ${data.sourceName || ''} @ ${data.quality || ''}`
+    audio.src = data.streamPath
+    bar.hidden = false
+    document.body.classList.add('has-player')
+    await audio.play().catch(() => {})
+  } catch (e) {
+    toast(e.message)
+  }
+}
+
+function closePlayer() {
+  const audio = $('#player-audio')
+  if (audio) {
+    audio.pause()
+    audio.removeAttribute('src')
+    audio.load()
+  }
+  const bar = $('#player-bar')
+  if (bar) bar.hidden = true
+  document.body.classList.remove('has-player')
+}
+$('#btn-player-close')?.addEventListener('click', closePlayer)
 
 function selectedSongs(container) {
   return [...container.querySelectorAll('.item')]
@@ -638,21 +679,57 @@ $('#btn-jobs-clear').addEventListener('click', async () => {
 async function loadSources() {
   try {
     const data = await api('/sources')
+    const list = data.list || []
     $('#sources-result').innerHTML =
-      (data.list || [])
+      list
         .map(
-          (s) => `<div class="item">
+          (s, idx) => `<div class="item" data-id="${escapeAttr(s.id)}">
         <div class="meta">
-          <div class="title">${escapeHtml(s.name)} <span class="badge ${s.enabled ? 'ok' : 'fail'}">${s.enabled ? '启用' : '禁用'}${s.loaded ? '' : ' · 未加载'}</span></div>
+          <div class="title"><span class="src-rank">${idx + 1}</span>${escapeHtml(s.name)} <span class="badge ${s.enabled ? 'ok' : 'fail'}">${s.enabled ? '启用' : '禁用'}${s.loaded ? '' : ' · 未加载'}</span></div>
           <div class="sub">${escapeHtml(s.filename)} · v${escapeHtml(s.version || '-')} · ${(s.platforms || []).join(',')}</div>
         </div>
         <div class="actions">
+          <button type="button" class="btn-icon btn-src-up" data-id="${escapeAttr(s.id)}" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
+          <button type="button" class="btn-icon btn-src-down" data-id="${escapeAttr(s.id)}" title="下移" ${idx === list.length - 1 ? 'disabled' : ''}>↓</button>
+          <button type="button" data-id="${escapeAttr(s.id)}" class="btn-src-test">测试</button>
           <button type="button" data-id="${escapeAttr(s.id)}" data-enabled="${s.enabled ? 0 : 1}" class="btn-src-toggle">${s.enabled ? '禁用' : '启用'}</button>
           <button type="button" data-id="${escapeAttr(s.id)}" class="btn-src-del">删除</button>
         </div>
       </div>`
         )
         .join('') || emptyHtml('暂无音源')
+
+    const reorderBy = async (id, dir) => {
+      const ids = list.map((s) => s.id)
+      const i = ids.indexOf(id)
+      const j = i + dir
+      if (i < 0 || j < 0 || j >= ids.length) return
+      ;[ids[i], ids[j]] = [ids[j], ids[i]]
+      await api('/sources/reorder', { method: 'POST', body: JSON.stringify({ ids }) })
+      loadSources()
+    }
+    $$('.btn-src-up').forEach((btn) => {
+      btn.addEventListener('click', () => reorderBy(btn.dataset.id, -1))
+    })
+    $$('.btn-src-down').forEach((btn) => {
+      btn.addEventListener('click', () => reorderBy(btn.dataset.id, 1))
+    })
+    $$('.btn-src-test').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true
+        try {
+          const r = await api(`/sources/${encodeURIComponent(btn.dataset.id)}/test`, {
+            method: 'POST',
+            body: '{}',
+          })
+          toast(`✓ ${r.sourceName || ''} ${r.ms}ms · ${r.song?.name} · ${r.urlHost}`)
+        } catch (e) {
+          toast(`测试失败: ${e.message}`)
+        } finally {
+          btn.disabled = false
+        }
+      })
+    })
     $$('.btn-src-toggle').forEach((btn) => {
       btn.addEventListener('click', async () => {
         await api('/sources/toggle', {
@@ -814,7 +891,9 @@ async function loadSettings() {
       .map((q) => `<option value="${escapeAttr(q.id)}">${escapeHtml(q.label)}</option>`)
       .join('')
     sel.value = data.preferredQuality || 'flac'
-    $('#settings-msg').textContent = `当前：${data.preferredQuality}`
+    $('#setting-filters').value = (data.filterWords || []).join('\n')
+    $('#setting-timeout').value = Math.round((data.downloadTimeoutMs || 300000) / 1000)
+    $('#settings-msg').textContent = `当前音质 ${data.preferredQuality} · 过滤 ${(data.filterWords || []).length} 词 · 超时 ${Math.round((data.downloadTimeoutMs || 300000) / 1000)}s`
   } catch (e) {
     toast(e.message)
   }
@@ -822,12 +901,14 @@ async function loadSettings() {
 $('#btn-settings-save')?.addEventListener('click', async () => {
   try {
     const preferredQuality = $('#setting-quality').value
+    const filterWords = $('#setting-filters').value
+    const downloadTimeoutMs = Number($('#setting-timeout').value) * 1000
     const data = await api('/settings', {
       method: 'PUT',
-      body: JSON.stringify({ preferredQuality }),
+      body: JSON.stringify({ preferredQuality, filterWords, downloadTimeoutMs }),
     })
-    $('#settings-msg').textContent = `已保存：${data.preferredQuality}`
-    toast(`默认音质已设为 ${data.preferredQuality}`)
+    $('#settings-msg').textContent = `已保存：${data.preferredQuality} · 过滤 ${(data.filterWords || []).length} 词 · 超时 ${Math.round(data.downloadTimeoutMs / 1000)}s`
+    toast('设置已保存')
   } catch (e) {
     toast(e.message)
   }
