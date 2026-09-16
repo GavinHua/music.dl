@@ -7,6 +7,7 @@ import * as download from '../services/download.js'
 import { getMusicUrl } from '../services/sources.js'
 import { listLibraryFresh, syncLibraryWithDisk, deleteLibraryEntry, scanOrphanFiles, findMissingLyrics } from '../services/librarySync.js'
 import * as settings from '../services/settings.js'
+import * as preview from '../services/preview.js'
 import { libraryRepo } from '../db/index.js'
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } })
@@ -193,6 +194,21 @@ export function createApiRouter() {
     }
   })
 
+  router.post('/preview', async (req, res) => {
+    try {
+      const musicInfo = req.body?.musicInfo || req.body?.song || req.body
+      if (!musicInfo?.name && !musicInfo?.songmid) return res.status(400).json({ error: 'musicInfo required' })
+      const data = await preview.resolvePreview(musicInfo, req.body?.quality)
+      res.json(data)
+    } catch (e) {
+      res.status(500).json({ error: e.message })
+    }
+  })
+
+  router.get('/preview/stream/:token', (req, res) => {
+    preview.pipePreviewStream(req.params.token, res)
+  })
+
   // ---- download / jobs ----
   router.post('/download', async (req, res) => {
     try {
@@ -347,6 +363,18 @@ export function createApiRouter() {
       sources.reorderSources(ids)
       await sources.reloadSources()
       res.json({ ok: true, list: sources.listSources() })
+    } catch (e) {
+      res.status(500).json({ error: e.message })
+    }
+  })
+
+  router.post('/sources/:id/test', async (req, res) => {
+    try {
+      const result = await sources.testSource(req.params.id, {
+        platform: req.body?.platform,
+        quality: req.body?.quality,
+      })
+      res.json(result)
     } catch (e) {
       res.status(500).json({ error: e.message })
     }

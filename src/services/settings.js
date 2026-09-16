@@ -6,6 +6,9 @@ const settingsPath = () => path.join(config.dataDir, 'settings.json')
 
 const DEFAULTS = {
   preferredQuality: config.preferredQuality || 'flac',
+  filterWords: config.filterWords || [],
+  downloadTimeoutMs: config.downloadTimeoutMs || 5 * 60 * 1000,
+  downloadConcurrency: config.downloadConcurrency || 2,
 }
 
 export const QUALITY_OPTIONS = [
@@ -33,18 +36,46 @@ function writeFile(data) {
   fs.writeFileSync(settingsPath(), JSON.stringify(data, null, 2), 'utf8')
 }
 
+function normalizeFilterWords(input) {
+  if (Array.isArray(input)) {
+    return input.map((s) => String(s).trim()).filter(Boolean)
+  }
+  return String(input || '')
+    .split(/[,，\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
 export function loadSettings() {
   const stored = { ...DEFAULTS, ...readFile() }
+  applyRuntime(stored)
+  return getSettings()
+}
+
+function applyRuntime(stored) {
   if (stored.preferredQuality && QUALITY_RANK[String(stored.preferredQuality).toLowerCase()] != null) {
     config.preferredQuality = stored.preferredQuality
   }
-  return getSettings()
+  if (stored.filterWords != null) {
+    config.filterWords = normalizeFilterWords(stored.filterWords)
+  }
+  if (stored.downloadTimeoutMs != null) {
+    const n = Number(stored.downloadTimeoutMs)
+    if (Number.isFinite(n) && n >= 30_000) config.downloadTimeoutMs = n
+  }
+  if (stored.downloadConcurrency != null) {
+    const n = Number(stored.downloadConcurrency)
+    if (Number.isFinite(n) && n >= 1 && n <= 16) config.downloadConcurrency = Math.round(n)
+  }
 }
 
 export function getSettings() {
   return {
     preferredQuality: config.preferredQuality,
     qualities: QUALITY_OPTIONS,
+    filterWords: [...(config.filterWords || [])],
+    downloadTimeoutMs: config.downloadTimeoutMs,
+    downloadConcurrency: config.downloadConcurrency,
   }
 }
 
@@ -54,8 +85,29 @@ export function updateSettings(patch = {}) {
     const q = String(patch.preferredQuality).toLowerCase()
     if (!(q in QUALITY_RANK)) throw new Error(`不支持的音质: ${patch.preferredQuality}`)
     next.preferredQuality = q
-    config.preferredQuality = q
   }
+  if (patch.filterWords != null) {
+    next.filterWords = normalizeFilterWords(patch.filterWords)
+  }
+  if (patch.downloadTimeoutMs != null) {
+    const n = Number(patch.downloadTimeoutMs)
+    if (!Number.isFinite(n) || n < 30_000) throw new Error('超时时间至少 30 秒')
+    next.downloadTimeoutMs = Math.round(n)
+  }
+  if (patch.downloadConcurrency != null) {
+    const n = Number(patch.downloadConcurrency)
+    if (!Number.isFinite(n) || n < 1 || n > 16) throw new Error('并发数需在 1–16')
+    next.downloadConcurrency = Math.round(n)
+  }
+  applyRuntime(next)
   writeFile(next)
   return getSettings()
+}
+
+/** Whether song name/singer/album matches any filter word. */
+export function matchesFilterWords(song, words = config.filterWords) {
+  const list = words || []
+  if (!list.length) return false
+  const hay = `${song?.name || ''} ${song?.singer || song?.artist || ''} ${song?.albumName || song?.album || ''}`.toLowerCase()
+  return list.some((w) => w && hay.includes(String(w).toLowerCase()))
 }

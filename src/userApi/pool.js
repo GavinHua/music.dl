@@ -165,11 +165,19 @@ export function callWorkerRequest(id, action, source, info, timeoutMs = 20000) {
   })
 }
 
-export async function getMusicUrlViaWorkers(platform, songInfo, quality, { preferredOrder, excludeSourceIds = [] } = {}) {
+export async function getMusicUrlViaWorkers(platform, songInfo, quality, { preferredOrder, excludeSourceIds = [], onlySourceId } = {}) {
   const exclude = new Set(excludeSourceIds)
-  const list = [...children.values()]
+  let list = [...children.values()]
     .filter((s) => s.enabled && s.ready && s.info.sources?.[platform] && !exclude.has(s.info.id))
     .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999))
+
+  if (onlySourceId) {
+    list = list.filter((s) => s.info.id === onlySourceId)
+    if (!list.length) {
+      const one = children.get(onlySourceId)
+      if (one?.ready && one.info.sources?.[platform]) list = [one]
+    }
+  }
 
   if (preferredOrder?.length) {
     list.sort((a, b) => {

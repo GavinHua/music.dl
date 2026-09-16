@@ -6,6 +6,7 @@ import { jobsRepo, libraryRepo } from '../db/index.js'
 import { getMusicUrl, getLyricFromSources } from './sources.js'
 import { getLyric } from './music.js'
 import { embedLyric } from './tags.js'
+import { matchesFilterWords } from './settings.js'
 import {
   decideDownload,
   buildRelativePath,
@@ -21,13 +22,30 @@ let pumpScheduled = false
 
 export function enqueueSongs(songs, { type = 'download', quality, payload = {} } = {}) {
   const q = quality || config.preferredQuality
+  const incoming = Array.isArray(songs) ? songs : []
+  const filteredOut = []
+  const kept = []
+  for (const song of incoming) {
+    const musicInfo = normalizeIncomingSong(song)
+    if (matchesFilterWords(musicInfo)) {
+      filteredOut.push(musicInfo)
+      continue
+    }
+    kept.push(musicInfo)
+  }
+
   const jobId = jobsRepo.create({
     type,
-    payload: { ...payload, quality: q },
-    total: songs.length,
+    payload: {
+      ...payload,
+      quality: q,
+      filtered: filteredOut.length,
+      filterWords: [...(config.filterWords || [])],
+    },
+    total: kept.length + filteredOut.length,
   })
-  for (const song of songs) {
-    const musicInfo = normalizeIncomingSong(song)
+
+  for (const musicInfo of kept) {
     jobsRepo.addItem({
       job_id: jobId,
       platform: musicInfo.source,
@@ -39,7 +57,28 @@ export function enqueueSongs(songs, { type = 'download', quality, payload = {} }
       music_info: musicInfo,
     })
   }
-  jobsRepo.update(jobId, { status: 'running' })
+  for (const musicInfo of filteredOut) {
+    jobsRepo.addItem({
+      job_id: jobId,
+      platform: musicInfo.source,
+      songmid: String(musicInfo.songmid || musicInfo.hash || musicInfo.id || ''),
+      name: musicInfo.name || '',
+      singer: musicInfo.singer || '',
+      album: musicInfo.albumName || '',
+      quality: q,
+      music_info: musicInfo,
+      status: 'skipped',
+      message: 'filtered by filter words',
+    })
+  }
+
+  // addItem defaults status to pending then spreads item — ensure skipped stuck
+  // (status is in INSERT columns via @status)
+  jobsRepo.update(jobId, {
+    status: kept.length ? 'running' : 'completed',
+    message: filteredOut.length ? `filtered ${filteredOut.length}, queue ${kept.length}` : '',
+    progress: filteredOut.length,
+  })
   schedulePump()
   return jobsRepo.get(jobId)
 }
@@ -233,12 +272,39 @@ export function enqueueLyricFill(rows) {
   return enqueueSongs(songs, { type: 'lyric_fill' })
 }
 
-function downloadFile(url, dest) {
+function downloadFile(url, dest, timeoutMs = config.downloadTimeoutMs) {
+  const ms = Number(timeoutMs) || 5 * 60 * 1000
   return new Promise((resolve, reject) => {
+    let settled = false
+    const fail = (err) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try {
+        req.destroy()
+      } catch {}
+      try {
+        out.destroy()
+      } catch {}
+      try {
+        fs.unlinkSync(dest)
+      } catch {}
+      reject(err instanceof Error ? err : new Error(String(err)))
+    }
+    const done = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve()
+    }
+
+    const timer = setTimeout(() => fail(new Error(`下载超时（${Math.round(ms / 1000)}s）`)), ms)
     const out = fs.createWriteStream(dest)
     const req = needle.get(url, {
       follow_max: 5,
-      response_timeout: 120000,
+      open_timeout: 30_000,
+      response_timeout: ms,
+      read_timeout: ms,
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -246,14 +312,13 @@ function downloadFile(url, dest) {
     })
     req.on('header', (statusCode) => {
       if (statusCode >= 400) {
-        out.destroy()
-        reject(new Error(`下载失败 HTTP ${statusCode}`))
+        fail(new Error(`下载失败 HTTP ${statusCode}`))
       }
     })
     req.pipe(out)
-    out.on('finish', () => resolve())
-    out.on('error', reject)
-    req.on('error', reject)
+    out.on('finish', done)
+    out.on('error', fail)
+    req.on('error', fail)
   })
 }
 
