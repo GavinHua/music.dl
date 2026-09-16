@@ -2,6 +2,8 @@ const $ = (s) => document.querySelector(s)
 const $$ = (s) => [...document.querySelectorAll(s)]
 
 let jobsTimer = null
+let openJobId = null
+let openJobHtml = ''
 let currentPlaylist = { source: '', id: '' }
 let detailSongs = []
 let missingLyricTracks = []
@@ -94,7 +96,7 @@ function songItemHtml(s, { checkable = true } = {}) {
   const source = s.source || ''
   return `<div class="item" data-json='${escapeAttr(JSON.stringify(s))}'>
     <div class="meta">
-      ${checkable ? `<input type="checkbox" class="pick" aria-label="选择" />` : ''}
+      ${checkable ? `<label class="pick-wrap"><input type="checkbox" class="pick" aria-label="选择" /></label>` : ''}
       <div class="title">${escapeHtml(s.name || '')}</div>
       <div class="sub"><span class="badge">${escapeHtml(source)}</span>${escapeHtml(s.singer || '')} · ${escapeHtml(s.albumName || s.album || '')}</div>
     </div>
@@ -117,6 +119,15 @@ function escapeAttr(s) {
 }
 
 function bindSongList(container) {
+  container.querySelectorAll('.item').forEach((item) => {
+    const pick = item.querySelector('.pick')
+    if (pick) {
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('button, a, input, label, .actions')) return
+        pick.checked = !pick.checked
+      })
+    }
+  })
   container.querySelectorAll('.btn-one-dl').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const item = btn.closest('.item')
@@ -590,8 +601,64 @@ $('#jobs-auto')?.addEventListener('change', () => {
   else stopJobsAuto()
 })
 
+function jobCardEl(id) {
+  return $(`#jobs-result .job-card[data-id="${id}"]`)
+}
+
+function clearJobDetail() {
+  openJobId = null
+  openJobHtml = ''
+  $$('#jobs-result .job-detail-box').forEach((el) => el.remove())
+  $$('#jobs-result .job-card.open').forEach((el) => el.classList.remove('open'))
+  $$('#jobs-result .btn-job-detail').forEach((btn) => btn.setAttribute('aria-expanded', 'false'))
+}
+
+function jobDetailHtml(job) {
+  const items = (job.items || [])
+    .map((i) => `${padStatus(i.status)} | ${i.name} - ${i.singer}\n    ${i.message || ''} ${i.file_path || ''}`)
+    .join('\n')
+  return `<b>任务 #${job.id}</b> · ${escapeHtml(job.status || '')} · ${job.progress || 0}/${job.total || 0}\n${items || '无条目'}`
+}
+
+async function loadJobDetail(id, { keepScroll = true, notify = false } = {}) {
+  if (!id) return
+  const card = jobCardEl(id)
+  if (!card) {
+    clearJobDetail()
+    return
+  }
+  let box = card.querySelector('.job-detail-box')
+  const scrollTop = keepScroll && box ? box.scrollTop : 0
+  try {
+    const job = await api(`/jobs/${id}`)
+    if (String(openJobId) !== String(id)) return
+    $$('#jobs-result .job-card').forEach((el) => {
+      if (el === card) return
+      el.classList.remove('open')
+      el.querySelector('.job-detail-box')?.remove()
+      el.querySelector('.btn-job-detail')?.setAttribute('aria-expanded', 'false')
+    })
+    card.classList.add('open')
+    card.querySelector('.btn-job-detail')?.setAttribute('aria-expanded', 'true')
+    if (!box) {
+      box = document.createElement('div')
+      box.className = 'job-detail-box'
+      card.appendChild(box)
+    }
+    box.innerHTML = jobDetailHtml(job)
+    openJobHtml = box.innerHTML
+    if (keepScroll) box.scrollTop = scrollTop
+  } catch (e) {
+    if (String(openJobId) !== String(id)) return
+    clearJobDetail()
+    if (notify) toast(e.message)
+  }
+}
+
 async function loadJobs() {
   try {
+    const openBox = $('#jobs-result .job-card.open .job-detail-box')
+    const scrollTop = openBox?.scrollTop || 0
     const data = await api('/jobs')
     $('#jobs-result').innerHTML =
       (data.list || [])
@@ -599,32 +666,34 @@ async function loadJobs() {
           const canRetry = ['failed', 'cancelled', 'completed'].includes(j.status)
           const canCancel = ['running', 'pending'].includes(j.status)
           const pct = j.total ? Math.round((j.progress / j.total) * 100) : 0
-          return `<div class="item">
-          <div class="meta">
-            <div class="title">#${j.id} ${escapeHtml(j.type)} <span class="badge status-${escapeHtml(j.status)}">${escapeHtml(j.status)}</span></div>
-            <div class="sub">${j.progress}/${j.total}（${pct}%） · ${escapeHtml(j.message || '')}</div>
+          const isOpen = String(openJobId) === String(j.id)
+          return `<div class="item job-card${isOpen ? ' open' : ''}" data-id="${j.id}">
+          <div class="job-card-row">
+            <div class="meta">
+              <div class="title">#${j.id} ${escapeHtml(j.type)} <span class="badge status-${escapeHtml(j.status)}">${escapeHtml(j.status)}</span></div>
+              <div class="sub">${j.progress}/${j.total}（${pct}%） · ${escapeHtml(j.message || '')}</div>
+            </div>
+            <div class="actions">
+              <button type="button" data-id="${j.id}" class="btn-job-detail" aria-expanded="${isOpen ? 'true' : 'false'}">详情</button>
+              ${canCancel ? `<button type="button" data-id="${j.id}" class="btn-job-cancel">取消</button>` : ''}
+              ${canRetry ? `<button type="button" data-id="${j.id}" class="btn-job-retry">重试失败</button>` : ''}
+              <button type="button" data-id="${j.id}" class="btn-job-del">删除</button>
+            </div>
           </div>
-          <div class="actions">
-            <button type="button" data-id="${j.id}" class="btn-job-detail">详情</button>
-            ${canCancel ? `<button type="button" data-id="${j.id}" class="btn-job-cancel">取消</button>` : ''}
-            ${canRetry ? `<button type="button" data-id="${j.id}" class="btn-job-retry">重试失败</button>` : ''}
-            <button type="button" data-id="${j.id}" class="btn-job-del">删除</button>
-          </div>
+          ${isOpen ? `<div class="job-detail-box">${openJobHtml || '加载中…'}</div>` : ''}
         </div>`
         })
         .join('') || emptyHtml('暂无任务')
 
     $$('.btn-job-detail').forEach((btn) => {
       btn.addEventListener('click', async () => {
-        try {
-          const job = await api(`/jobs/${btn.dataset.id}`)
-          const items = (job.items || [])
-            .map((i) => `${padStatus(i.status)} | ${i.name} - ${i.singer}\n    ${i.message || ''} ${i.file_path || ''}`)
-            .join('\n')
-          $('#job-detail').innerHTML = `<div class="job-detail-box"><b>任务 #${job.id}</b>\n${items || '无条目'}</div>`
-        } catch (e) {
-          toast(e.message)
+        const id = btn.dataset.id
+        if (String(openJobId) === String(id)) {
+          clearJobDetail()
+          return
         }
+        openJobId = id
+        await loadJobDetail(id, { keepScroll: false, notify: true })
       })
     })
     $$('.btn-job-cancel').forEach((btn) => {
@@ -654,13 +723,18 @@ async function loadJobs() {
         if (!confirm(`删除任务 #${btn.dataset.id}？`)) return
         try {
           await api(`/jobs/${btn.dataset.id}`, { method: 'DELETE' })
-          $('#job-detail').innerHTML = ''
+          if (String(openJobId) === String(btn.dataset.id)) clearJobDetail()
           loadJobs()
         } catch (e) {
           toast(e.message)
         }
       })
     })
+    if (openJobId) {
+      await loadJobDetail(openJobId)
+      const next = $('#jobs-result .job-card.open .job-detail-box')
+      if (next) next.scrollTop = scrollTop
+    }
   } catch (e) {
     toast(e.message)
   }
@@ -673,7 +747,7 @@ $('#btn-jobs-clear').addEventListener('click', async () => {
   try {
     const r = await api('/jobs/clear-finished', { method: 'POST', body: '{}' })
     toast(`已清理 ${r.cleared} 个任务`)
-    $('#job-detail').innerHTML = ''
+    clearJobDetail()
     loadJobs()
   } catch (e) {
     toast(e.message)
@@ -812,6 +886,7 @@ async function loadLibrary() {
     $$('.btn-lib-del').forEach((btn) => {
       btn.addEventListener('click', async () => {
         await api(`/library/${btn.dataset.id}`, { method: 'DELETE' })
+        toast('已删除曲库记录，可重新下载（文件仍在磁盘）')
         loadLibrary()
       })
     })
@@ -850,7 +925,7 @@ async function scanMissingLyrics() {
         .map(
           (t) => `<div class="item">
           <div class="meta">
-            <input type="checkbox" class="pick-miss" data-id="${t.id}" checked aria-label="选择" />
+            <label class="pick-wrap"><input type="checkbox" class="pick-miss" data-id="${t.id}" checked aria-label="选择" /></label>
             <div class="title">${escapeHtml(t.name)} · ${escapeHtml(t.singer)}</div>
             <div class="sub"><span class="badge">${escapeHtml(t.quality || '')}</span>${escapeHtml(t.file_path || '')}</div>
           </div>
