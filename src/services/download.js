@@ -236,6 +236,40 @@ async function processItem(item) {
     return
   }
 
+  if (decision.action === 'adopt') {
+    const row = decision.existing
+    if (!row?.file_path) {
+      jobsRepo.updateItem(item.id, { status: 'failed', message: 'adopt missing file' })
+      return
+    }
+    const platform = musicInfo.source || musicInfo.platform || row.platform
+    const songmid = String(musicInfo.songmid || musicInfo.hash || musicInfo.id || row.songmid || '')
+    if (!platform || !songmid) {
+      jobsRepo.updateItem(item.id, {
+        status: 'skipped',
+        message: `${decision.reason}（缺 platform/songmid，未写入曲库）`,
+        file_path: row.file_path,
+      })
+      return
+    }
+    const lyricOk = await saveLyric(musicInfo, row.file_path)
+    assertNotCancelled(item.id)
+    upsertLibraryRecord({
+      musicInfo: { ...musicInfo, source: platform, platform, songmid },
+      quality: row.quality || targetQuality,
+      fileRel: row.file_path,
+      lyricRel: lyricOk ? LYRIC_EMBEDDED : '',
+      fileSize: row.file_size || 0,
+    })
+    jobsRepo.updateItem(item.id, {
+      status: 'done',
+      message: lyricOk ? 'adopted + lyric' : 'adopted from disk',
+      file_path: row.file_path,
+      quality: row.quality || targetQuality,
+    })
+    return
+  }
+
   if (decision.action === 'lyric_only') {
     const ok = await saveLyric(musicInfo, decision.existing.file_path)
     assertNotCancelled(item.id)
@@ -300,7 +334,10 @@ async function processItem(item) {
       abs = absoluteMusicPath(rel)
       ensureParentDir(abs)
 
-      if (decision.action === 'upgrade' && decision.existing?.file_path) {
+      if (
+        (decision.action === 'upgrade' || decision.existing?.file_path) &&
+        decision.existing?.file_path
+      ) {
         const oldAbs = absoluteMusicPath(decision.existing.file_path)
         if (oldAbs !== abs && fs.existsSync(oldAbs)) {
           try {

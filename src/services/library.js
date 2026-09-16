@@ -70,6 +70,8 @@ export async function trackHasLyricAsync(row) {
   return hasEmbeddedLyric(abs)
 }
 
+const AUDIO_EXT = new Set(['.mp3', '.flac', '.m4a', '.wav', '.ogg', '.ape', '.aac'])
+
 function libraryFileExists(row) {
   if (!row?.file_path) return false
   return fs.existsSync(absoluteMusicPath(row.file_path))
@@ -90,21 +92,111 @@ function decideForExisting(existing, targetQuality) {
   return { action: 'upgrade', existing, reason: '可升级音质' }
 }
 
+/** Parse quality tag from filename: `Title - Singer - QUALITY - Album.ext` */
+function qualityFromFilename(filename, album) {
+  const base = filename.replace(/\.[^.]+$/, '')
+  const albumTail = ` - ${album}`
+  if (album && base.endsWith(albumTail)) {
+    const withoutAlbum = base.slice(0, -albumTail.length)
+    const parts = withoutAlbum.split(' - ')
+    return parts.length >= 3 ? parts[parts.length - 1] : ''
+  }
+  const parts = base.split(' - ')
+  return parts.length >= 3 ? parts[2] : ''
+}
+
+/**
+ * Find an on-disk audio file that matches the expected naming layout,
+ * even when the library DB has no record (e.g. after DB reset).
+ */
+export function findDiskMatch(musicInfo, targetQuality) {
+  const fullSinger = musicInfo.singer || musicInfo.artist || ''
+  const singerDir = sanitizePathPart(primarySinger(fullSinger), 'Unknown')
+  const album = sanitizePathPart(musicInfo.albumName || musicInfo.album || 'Single', 'Single')
+  const title = sanitizePathPart(musicInfo.name || musicInfo.songname, 'Unknown')
+  const singerLabel = sanitizePathPart(fullSinger || singerDir, 'Unknown')
+  const dirRel = path.join(singerDir, album)
+  const dirAbs = absoluteMusicPath(dirRel)
+  if (!fs.existsSync(dirAbs)) return null
+
+  const prefix = `${title} - ${singerLabel} - `
+  let names
+  try {
+    names = fs.readdirSync(dirAbs)
+  } catch {
+    return null
+  }
+
+  const matches = []
+  for (const name of names) {
+    if (name.startsWith('.')) continue
+    const ext = path.extname(name).toLowerCase()
+    if (!AUDIO_EXT.has(ext)) continue
+    if (!name.startsWith(prefix)) continue
+    const rel = path.join(dirRel, name)
+    const abs = absoluteMusicPath(rel)
+    let size = 0
+    try {
+      size = fs.statSync(abs).size
+    } catch {
+      continue
+    }
+    if (size <= 0) continue
+    const quality = qualityFromFilename(name, album) || targetQuality || ''
+    matches.push({ rel, quality, size })
+  }
+  if (!matches.length) return null
+
+  matches.sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality) || b.size - a.size)
+  const best = matches[0]
+  return {
+    platform: musicInfo.source || musicInfo.platform || '',
+    songmid: String(musicInfo.songmid || musicInfo.hash || musicInfo.id || ''),
+    name: musicInfo.name || musicInfo.songname || '',
+    singer: musicInfo.singer || musicInfo.artist || '',
+    album: musicInfo.albumName || musicInfo.album || '',
+    quality: best.quality,
+    file_path: best.rel,
+    lyric_path: '',
+    file_size: best.size,
+  }
+}
+
 export function decideDownload(musicInfo, targetQuality) {
   const platform = musicInfo.source || musicInfo.platform
   const songmid = String(musicInfo.songmid || musicInfo.hash || musicInfo.id || '')
-  if (!platform || !songmid) {
-    return { action: 'download', reason: 'new track' }
+
+  if (platform && songmid) {
+    const existing = libraryRepo.findByKey(platform, songmid)
+    if (existing) return decideForExisting(existing, targetQuality)
+
+    const byName = libraryRepo.findByNameSinger(musicInfo.name, musicInfo.singer)
+    if (byName.length) {
+      const best = byName.sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality))[0]
+      return decideForExisting(best, targetQuality)
+    }
+  } else {
+    const byName = libraryRepo.findByNameSinger(musicInfo.name, musicInfo.singer)
+    if (byName.length) {
+      const best = byName.sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality))[0]
+      return decideForExisting(best, targetQuality)
+    }
   }
 
-  const existing = libraryRepo.findByKey(platform, songmid)
-  if (existing) return decideForExisting(existing, targetQuality)
-
-  const byName = libraryRepo.findByNameSinger(musicInfo.name, musicInfo.singer)
-  if (byName.length) {
-    const best = byName.sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality))[0]
-    return decideForExisting(best, targetQuality)
+  // DB miss: still honor files left on disk (e.g. after DB wipe)
+  const disk = findDiskMatch(musicInfo, targetQuality)
+  if (disk) {
+    if (qualityRank(disk.quality) >= qualityRank(targetQuality)) {
+      return {
+        action: 'adopt',
+        existing: disk,
+        reason: '磁盘已有文件，补回曲库记录',
+      }
+    }
+    // lower quality on disk → download upgrade; keep disk path for optional cleanup
+    return { action: 'download', existing: disk, reason: '磁盘音质较低，升级下载' }
   }
+
   return { action: 'download', reason: 'new track' }
 }
 
