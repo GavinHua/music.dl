@@ -9,6 +9,10 @@ const DEFAULTS = {
   filterWords: config.filterWords || [],
   downloadTimeoutMs: config.downloadTimeoutMs || 5 * 60 * 1000,
   downloadConcurrency: config.downloadConcurrency || 2,
+  tgBotToken: config.tgBotToken || '',
+  tgChatId: config.tgChatId || '',
+  tgProxy: config.tgProxy || '',
+  tgListen: config.tgListen !== false,
 }
 
 export const QUALITY_OPTIONS = [
@@ -67,6 +71,18 @@ function applyRuntime(stored) {
     const n = Number(stored.downloadConcurrency)
     if (Number.isFinite(n) && n >= 1 && n <= 16) config.downloadConcurrency = Math.round(n)
   }
+  if (stored.tgBotToken != null) {
+    config.tgBotToken = String(stored.tgBotToken || '').trim()
+  }
+  if (stored.tgChatId != null) {
+    config.tgChatId = String(stored.tgChatId || '').trim()
+  }
+  if (stored.tgProxy != null) {
+    config.tgProxy = String(stored.tgProxy || '').trim()
+  }
+  if (stored.tgListen != null) {
+    config.tgListen = stored.tgListen !== false && stored.tgListen !== '0' && stored.tgListen !== 'false'
+  }
 }
 
 export function getSettings() {
@@ -76,6 +92,10 @@ export function getSettings() {
     filterWords: [...(config.filterWords || [])],
     downloadTimeoutMs: config.downloadTimeoutMs,
     downloadConcurrency: config.downloadConcurrency,
+    tgBotToken: config.tgBotToken || '',
+    tgChatId: config.tgChatId || '',
+    tgProxy: config.tgProxy || '',
+    tgListen: config.tgListen !== false,
   }
 }
 
@@ -99,6 +119,18 @@ export function updateSettings(patch = {}) {
     if (!Number.isFinite(n) || n < 1 || n > 16) throw new Error('并发数需在 1–16')
     next.downloadConcurrency = Math.round(n)
   }
+  if (patch.tgBotToken != null) {
+    next.tgBotToken = String(patch.tgBotToken || '').trim()
+  }
+  if (patch.tgChatId != null) {
+    next.tgChatId = String(patch.tgChatId || '').trim()
+  }
+  if (patch.tgProxy != null) {
+    next.tgProxy = String(patch.tgProxy || '').trim()
+  }
+  if (patch.tgListen != null) {
+    next.tgListen = Boolean(patch.tgListen)
+  }
   applyRuntime(next)
   writeFile(next)
   return getSettings()
@@ -110,4 +142,10 @@ export function matchesFilterWords(song, words = config.filterWords) {
   if (!list.length) return false
   const hay = `${song?.name || ''} ${song?.singer || song?.artist || ''} ${song?.albumName || song?.album || ''}`.toLowerCase()
   return list.some((w) => w && hay.includes(String(w).toLowerCase()))
+}
+
+export function applyFilterWords(songs, words = config.filterWords) {
+  if (!Array.isArray(songs) || !songs.length) return []
+  if (!words?.length) return songs
+  return songs.filter((song) => !matchesFilterWords(song, words))
 }
