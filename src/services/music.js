@@ -1,4 +1,5 @@
 import musicSdk from '../vendor/musicSdk/index.js'
+import { applyFilterWords } from './settings.js'
 
 const PLATFORMS = ['kw', 'kg', 'tx', 'wy', 'mg']
 
@@ -9,7 +10,10 @@ export function listPlatforms() {
 export async function searchMusic({ keyword, source = 'kw', page = 1, limit = 20 }) {
   const sdk = musicSdk[source]
   if (!sdk?.musicSearch?.search) throw new Error(`平台 ${source} 不支持搜索`)
-  return sdk.musicSearch.search(keyword, page, limit)
+  const fetchLimit = Math.min(100, Math.max(limit * 3, limit))
+  const data = await sdk.musicSearch.search(keyword, page, fetchLimit)
+  const list = applyFilterWords(data?.list || []).slice(0, limit)
+  return { ...(data || {}), list }
 }
 
 export async function searchAll({ keyword, page = 1, limit = 20 }) {
@@ -22,6 +26,82 @@ export async function searchAll({ keyword, page = 1, limit = 20 }) {
     }
   })
   return Promise.all(tasks)
+}
+
+function songKey(song) {
+  return `${String(song?.name || '').trim().toLowerCase()}|${String(song?.singer || song?.artist || '').trim().toLowerCase()}`
+}
+
+/** Merge all platforms, hide source, drop same name+singer. */
+export async function searchMerged({ keyword, page = 1, limit = 8 }) {
+  const blocks = await searchAll({ keyword, page, limit: Math.max(limit, 10) })
+  const queues = blocks.map((block) =>
+    (block.list || []).map((s) => ({ ...s, source: s.source || block.source }))
+  )
+  const seen = new Set()
+  const list = []
+  while (list.length < limit) {
+    let added = false
+    for (const q of queues) {
+      while (q.length) {
+        const song = q.shift()
+        const key = songKey(song)
+        if (!key.replace(/\|/g, '') || seen.has(key)) continue
+        seen.add(key)
+        list.push(song)
+        added = true
+        break
+      }
+      if (list.length >= limit) break
+    }
+    if (!added) break
+  }
+  return { list }
+}
+
+function playlistKey(p) {
+  return `${p.source || ''}|${p.id || p.listId || p.gid || ''}`
+}
+
+export async function searchMergedPlaylists({ keyword, page = 1, limit = 8 }) {
+  const blocks = await Promise.all(
+    PLATFORMS.map(async (source) => {
+      try {
+        const data = await searchSongList({ source, keyword, page, limit: Math.max(limit, 8) })
+        return (data?.list || []).map((p) => ({
+          ...p,
+          source: p.source || source,
+          id: String(p.id || p.listId || p.gid || p.sourceid || ''),
+          name: p.name || p.playListName || '未命名歌单',
+          author: p.author || p.userName || p.creator || '',
+          total: p.total || p.trackCount || p.musicnum || '',
+        }))
+      } catch {
+        return []
+      }
+    })
+  )
+  const seen = new Set()
+  const list = []
+  const queues = blocks.map((arr) => [...arr])
+  while (list.length < limit) {
+    let added = false
+    for (const q of queues) {
+      while (q.length) {
+        const pl = q.shift()
+        if (!pl?.id) continue
+        const key = playlistKey(pl)
+        if (seen.has(key)) continue
+        seen.add(key)
+        list.push(pl)
+        added = true
+        break
+      }
+      if (list.length >= limit) break
+    }
+    if (!added) break
+  }
+  return { list }
 }
 
 export async function getSongListTags(source = 'kw') {

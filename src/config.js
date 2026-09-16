@@ -28,6 +28,10 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean),
   tgBotToken: process.env.TG_BOT_TOKEN || '',
+  tgChatId: String(process.env.TG_CHAT_ID || '').trim(),
+  tgProxy: String(process.env.TG_PROXY || process.env.HTTPS_PROXY || process.env.ALL_PROXY || '').trim(),
+  /** 是否 getUpdates 收命令。false 时只发通知，避免和 MoviePilot/NAS 抢同一 Token。 */
+  tgListen: envBool('TG_LISTEN', true),
   tgAllowedIds: (process.env.TG_ALLOWED_IDS || '')
     .split(',')
     .map((s) => s.trim())

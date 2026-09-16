@@ -7,7 +7,7 @@ import { createApiRouter } from './routes/api.js'
 import { initMusicSdk } from './services/music.js'
 import { reloadSources } from './services/sources.js'
 import { loadSettings } from './services/settings.js'
-import { startTelegramBot } from './tg/bot.js'
+import { restartTelegramBot } from './tg/bot.js'
 
 async function main() {
   process.on('unhandledRejection', (err) => {
@@ -52,7 +52,7 @@ async function main() {
     console.log(`[app] listening on http://${config.host}:${config.port}`)
   })
 
-  startTelegramBot()
+  await restartTelegramBot()
 }
 
 main().catch((e) => {

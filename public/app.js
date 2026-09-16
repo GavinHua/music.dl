@@ -974,24 +974,66 @@ async function loadSettings() {
     $('#setting-filters').value = (data.filterWords || []).join('\n')
     $('#setting-timeout').value = Math.round((data.downloadTimeoutMs || 300000) / 1000)
     $('#setting-concurrency').value = data.downloadConcurrency || 2
-    $('#settings-msg').textContent = `当前音质 ${data.preferredQuality} · 并发 ${data.downloadConcurrency} · 过滤 ${(data.filterWords || []).length} 词 · 超时 ${Math.round((data.downloadTimeoutMs || 300000) / 1000)}s`
+    $('#setting-tg-token').value = data.tgBotToken || ''
+    $('#setting-tg-token').dataset.saved = data.tgBotToken || ''
+    $('#setting-tg-chat').value = data.tgChatId || ''
+    if ($('#setting-tg-proxy')) $('#setting-tg-proxy').value = data.tgProxy || ''
+    if ($('#setting-tg-listen')) $('#setting-tg-listen').checked = data.tgListen !== false
+    $('#settings-msg').textContent = `当前音质 ${data.preferredQuality} · 并发 ${data.downloadConcurrency} · 过滤 ${(data.filterWords || []).length} 词 · 超时 ${Math.round((data.downloadTimeoutMs || 300000) / 1000)}s · ${formatTgState(data)}`
   } catch (e) {
     toast(e.message)
   }
 }
-$('#btn-settings-save')?.addEventListener('click', async () => {
+$('#btn-settings-save')?.addEventListener('click', () => saveSettings(true))
+$('#btn-tg-test')?.addEventListener('click', () => saveSettings(true, true))
+
+function formatTgState(data) {
+  const at = data.tgUsername ? ` @${data.tgUsername}` : ''
+  if (data.tgError) return `Bot 未连接：${data.tgError}`
+  if (data.tgPolling) return `Bot 收命令中${at}`
+  if (data.tgRunning) return `Bot 仅通知${at}（命令由其他程序接收）`
+  return 'Bot 未启动'
+}
+
+async function saveSettings(showToast = true, testing = false) {
   try {
     const preferredQuality = $('#setting-quality').value
     const filterWords = $('#setting-filters').value
     const downloadTimeoutMs = Number($('#setting-timeout').value) * 1000
     const downloadConcurrency = Number($('#setting-concurrency').value)
+    const tgBotToken = $('#setting-tg-token').value
+    const tgChatId = $('#setting-tg-chat').value
+    const tgProxy = $('#setting-tg-proxy')?.value || ''
+    const tokenEl = $('#setting-tg-token')
+    const tokenChanged = !!(tgBotToken.trim() && tgBotToken !== (tokenEl?.dataset.saved || ''))
+    let tgListen = $('#setting-tg-listen') ? $('#setting-tg-listen').checked : true
+    if (tokenChanged) {
+      tgListen = true
+      if ($('#setting-tg-listen')) $('#setting-tg-listen').checked = true
+    }
+    if (testing && !tgBotToken.trim()) {
+      toast('请先填写 Bot Token')
+      return
+    }
+    if (testing) $('#settings-msg').textContent = '正在连接 Telegram…'
     const data = await api('/settings', {
       method: 'PUT',
-      body: JSON.stringify({ preferredQuality, filterWords, downloadTimeoutMs, downloadConcurrency }),
+      body: JSON.stringify({
+        preferredQuality,
+        filterWords,
+        downloadTimeoutMs,
+        downloadConcurrency,
+        tgBotToken,
+        tgChatId,
+        tgProxy,
+        tgListen,
+        tgTest: testing,
+      }),
     })
-    $('#settings-msg').textContent = `已保存：${data.preferredQuality} · 并发 ${data.downloadConcurrency} · 过滤 ${(data.filterWords || []).length} 词 · 超时 ${Math.round(data.downloadTimeoutMs / 1000)}s`
-    toast('设置已保存')
+    $('#settings-msg').textContent = `已保存：${data.preferredQuality} · 并发 ${data.downloadConcurrency} · 过滤 ${(data.filterWords || []).length} 词 · 超时 ${Math.round(data.downloadTimeoutMs / 1000)}s · ${formatTgState(data)}`
+    if (tokenEl) tokenEl.dataset.saved = data.tgBotToken || tgBotToken
+    if (showToast) toast(data.tgRunning ? (testing ? `Telegram 已连接 @${data.tgUsername || 'bot'}` : '设置已保存') : data.tgError || '设置已保存，Bot 未连上')
   } catch (e) {
     toast(e.message)
   }
-})
+}

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=6" />
+  <link rel="stylesheet" href="/styles.css?v=7" />
 </head>
 <body>
   <div class="ambient" aria-hidden="true"></div>
@@ -204,7 +204,7 @@
       <section id="tab-settings" class="panel">
         <div class="panel-head">
           <h2>设置</h2>
-          <p>下载偏好、过滤词与超时</p>
+          <p>下载偏好、过滤词与 Telegram Bot</p>
         </div>
         <div class="settings-card">
           <label class="settings-field">
@@ -219,7 +219,7 @@
           </label>
           <label class="settings-field">
             <span class="settings-label">过滤词</span>
-            <span class="settings-desc">歌名/歌手/专辑包含任一关键词则跳过下载（逗号或换行分隔），例如 Live、现场版</span>
+            <span class="settings-desc">歌名/歌手/专辑包含任一关键词则从搜索结果隐藏并跳过下载（逗号或换行分隔），例如 Live、现场版</span>
             <textarea id="setting-filters" rows="4" placeholder="Live&#10;现场版&#10;伴奏"></textarea>
           </label>
           <label class="settings-field">
@@ -227,8 +227,28 @@
             <span class="settings-desc">超时后失败并尝试其他音源；默认 300 秒（5 分钟）</span>
             <input id="setting-timeout" type="number" min="30" step="30" />
           </label>
+          <label class="settings-field">
+            <span class="settings-label">Telegram Bot Token</span>
+            <span class="settings-desc">在 @BotFather 创建机器人后粘贴 Token。留空则关闭 Bot。</span>
+            <input id="setting-tg-token" type="text" autocomplete="off" placeholder="123456:ABC..." />
+          </label>
+          <label class="settings-field">
+            <span class="settings-label">Telegram Chat ID</span>
+            <span class="settings-desc">下载通知发到这个会话。先保存 Token 和代理，私聊 Bot 发送 /id，把数字填到这里。</span>
+            <input id="setting-tg-chat" type="text" inputmode="numeric" placeholder="例如 123456789" />
+          </label>
+          <label class="settings-field">
+            <span class="settings-label">代理</span>
+            <span class="settings-desc">国内必须填写。Clash 混合端口可用 http://127.0.0.1:7890 或 socks5://127.0.0.1:7890。</span>
+            <input id="setting-tg-proxy" type="text" autocomplete="off" placeholder="http://127.0.0.1:7890" />
+          </label>
+          <label class="settings-field settings-check">
+            <span class="settings-label"><input id="setting-tg-listen" type="checkbox" /> 接收 Bot 命令</span>
+            <span class="settings-desc">一个 Token 同时只能有一个程序收消息。MoviePilot 请继续用旧 Bot；本机用新 Token，并勾选此项。</span>
+          </label>
           <div class="row-actions">
             <button type="button" id="btn-settings-save" class="primary">保存</button>
+            <button type="button" id="btn-tg-test">测试 Telegram 连接</button>
           </div>
           <div id="settings-msg" class="hint"></div>
         </div>
@@ -279,7 +299,7 @@
   </div>
 
   <div id="toast" role="status" aria-live="polite"></div>
-  <script src="/app.js?v=6"></script>
+  <script src="/app.js?v=14"></script>
 
   <div id="player-bar" class="player-bar" hidden>
     <div class="player-meta">

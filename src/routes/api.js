@@ -7,6 +7,7 @@ import * as download from '../services/download.js'
 import { getMusicUrl } from '../services/sources.js'
 import { listLibraryFresh, syncLibraryWithDisk, deleteLibraryEntry, scanOrphanFiles, findMissingLyrics } from '../services/librarySync.js'
 import * as settings from '../services/settings.js'
+import { restartTelegramBot, telegramStatus } from '../tg/bot.js'
 import * as preview from '../services/preview.js'
 import { libraryRepo } from '../db/index.js'
 
@@ -20,12 +21,43 @@ export function createApiRouter() {
   })
 
   router.get('/settings', (_req, res) => {
-    res.json(settings.getSettings())
+    const tg = telegramStatus()
+    res.json({
+      ...settings.getSettings(),
+      tgRunning: tg.running,
+      tgPolling: !!tg.polling,
+      tgError: tg.error,
+      tgUsername: tg.username,
+    })
   })
 
-  router.put('/settings', (req, res) => {
+  router.put('/settings', async (req, res) => {
     try {
-      res.json(settings.updateSettings(req.body || {}))
+      const prevToken = config.tgBotToken
+      const prevProxy = config.tgProxy
+      const prevListen = config.tgListen
+      const wasRunning = telegramStatus().running
+      const data = settings.updateSettings(req.body || {})
+      let tg = telegramStatus()
+      const tokenChanged = req.body?.tgBotToken != null && config.tgBotToken !== prevToken
+      const proxyChanged = req.body?.tgProxy != null && config.tgProxy !== prevProxy
+      const listenChanged = req.body?.tgListen != null && config.tgListen !== prevListen
+      const shouldRestart =
+        req.body?.tgTest ||
+        tokenChanged ||
+        proxyChanged ||
+        listenChanged ||
+        (req.body?.tgBotToken != null && !wasRunning && !!config.tgBotToken)
+      if (shouldRestart) {
+        tg = await restartTelegramBot()
+      }
+      res.json({
+        ...data,
+        tgRunning: !!tg.running,
+        tgPolling: !!tg.polling,
+        tgError: tg.error || '',
+        tgUsername: tg.username || '',
+      })
     } catch (e) {
       res.status(400).json({ error: e.message })
     }
