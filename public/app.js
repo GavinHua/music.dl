@@ -3,9 +3,12 @@ const $$ = (s) => [...document.querySelectorAll(s)]
 
 let jobsTimer = null
 let openJobId = null
-let openJobHtml = ''
+let sourceEditMode = false
+let sourceDraftList = []
+let sourceSavedIds = []
 let currentPlaylist = { source: '', id: '' }
 let detailSongs = []
+let detailTitle = ''
 let missingLyricTracks = []
 
 function toast(msg) {
@@ -55,6 +58,7 @@ function switchTab(tab) {
     stopJobsAuto()
   }
   if (tab === 'sources') loadSources()
+  else if (sourceEditMode) exitSourceEditMode(true)
   if (tab === 'library') loadLibrary()
   if (tab === 'playlist') browsePlaylists()
   if (tab === 'board') loadBoards()
@@ -134,7 +138,7 @@ function bindSongList(container) {
       const song = JSON.parse(item.dataset.json)
       try {
         const job = await api('/download', { method: 'POST', body: JSON.stringify({ songs: [song] }) })
-        toast(`已入队任务 #${job.id}`)
+        toast(`已入队 #${job.id} · ${job.title || song.name || '下载'}`)
       } catch (e) {
         toast(e.message)
       }
@@ -196,6 +200,7 @@ function selectedSongs(container) {
 // ---- detail modal ----
 function openDetail({ title, subtitle = '', songs = [], onDownloadAll }) {
   detailSongs = songs || []
+  detailTitle = title || ''
   $('#detail-title').textContent = title || '详情'
   $('#detail-sub').textContent = subtitle || `${detailSongs.length} 首`
   const body = $('#detail-body')
@@ -206,8 +211,11 @@ function openDetail({ title, subtitle = '', songs = [], onDownloadAll }) {
     if (typeof onDownloadAll === 'function') return onDownloadAll()
     if (!detailSongs.length) return toast('没有歌曲')
     try {
-      const job = await api('/download', { method: 'POST', body: JSON.stringify({ songs: detailSongs }) })
-      toast(`已入队 #${job.id}，共 ${detailSongs.length} 首`)
+      const job = await api('/download', {
+        method: 'POST',
+        body: JSON.stringify({ songs: detailSongs, title: detailTitle || undefined }),
+      })
+      toast(`已入队 #${job.id} · ${job.title || detailTitle || '下载'}，共 ${detailSongs.length} 首`)
     } catch (e) {
       toast(e.message)
     }
@@ -228,8 +236,11 @@ $('#btn-detail-dl-selected')?.addEventListener('click', async () => {
   const songs = selectedSongs($('#detail-body'))
   if (!songs.length) return toast('未选中歌曲')
   try {
-    const job = await api('/download', { method: 'POST', body: JSON.stringify({ songs }) })
-    toast(`已入队 #${job.id}，共 ${songs.length} 首`)
+    const job = await api('/download', {
+      method: 'POST',
+      body: JSON.stringify({ songs, title: detailTitle || undefined }),
+    })
+    toast(`已入队 #${job.id} · ${job.title || detailTitle || '下载'}，共 ${songs.length} 首`)
   } catch (e) {
     toast(e.message)
   }
@@ -283,8 +294,15 @@ $('#btn-dl-selected').addEventListener('click', async () => {
   const songs = selectedSongs($('#search-result'))
   if (!songs.length) return toast('未选中歌曲')
   try {
-    const job = await api('/download', { method: 'POST', body: JSON.stringify({ songs }) })
-    toast(`已入队 #${job.id}，共 ${songs.length} 首`)
+    const keyword = $('#search-keyword').value.trim()
+    const job = await api('/download', {
+      method: 'POST',
+      body: JSON.stringify({
+        songs,
+        title: keyword ? `${keyword} 等 ${songs.length} 首` : undefined,
+      }),
+    })
+    toast(`已入队 #${job.id} · ${job.title || '下载'}，共 ${songs.length} 首`)
   } catch (e) {
     toast(e.message)
   }
@@ -353,7 +371,7 @@ function renderPlaylistCards(list, source) {
           </div>
           <div class="actions">
             <button type="button" class="btn-pl-open" data-id="${escapeAttr(String(id))}" data-name="${escapeAttr(name)}" data-source="${escapeAttr(source)}">查看</button>
-            <button type="button" class="btn-pl-dl primary" data-id="${escapeAttr(String(id))}" data-source="${escapeAttr(source)}">下载</button>
+            <button type="button" class="btn-pl-dl primary" data-id="${escapeAttr(String(id))}" data-name="${escapeAttr(name)}" data-source="${escapeAttr(source)}">下载</button>
           </div>
         </div>`
       })
@@ -367,9 +385,13 @@ function renderPlaylistCards(list, source) {
       try {
         const data = await api('/download/playlist', {
           method: 'POST',
-          body: JSON.stringify({ source: btn.dataset.source, id: btn.dataset.id }),
+          body: JSON.stringify({
+            source: btn.dataset.source,
+            id: btn.dataset.id,
+            name: btn.dataset.name,
+          }),
         })
-        toast(`歌单任务 #${data.job.id}，${data.count} 首`)
+        toast(`#${data.job.id} · ${data.job.title || btn.dataset.name || '歌单'}，${data.count} 首`)
       } catch (e) {
         toast(e.message)
       }
@@ -390,9 +412,9 @@ async function openPlaylist(source, id, name = '') {
       onDownloadAll: async () => {
         const r = await api('/download/playlist', {
           method: 'POST',
-          body: JSON.stringify({ source, id }),
+          body: JSON.stringify({ source, id, name: name || undefined }),
         })
-        toast(`歌单任务 #${r.job.id}，${r.count} 首`)
+        toast(`#${r.job.id} · ${r.job.title || name || '歌单'}，${r.count} 首`)
       },
     })
   } catch (e) {
@@ -455,7 +477,7 @@ $('#btn-playlist-dl').addEventListener('click', async () => {
     const m = String(id).match(/^(kw|kg|tx|wy|mg)[:/](.+)$/i)
     if (m) body = { source: m[1].toLowerCase(), id: m[2] }
     const data = await api('/download/playlist', { method: 'POST', body: JSON.stringify(body) })
-    toast(`歌单任务 #${data.job.id}，${data.count} 首`)
+    toast(`#${data.job.id} · ${data.job.title || '歌单'}，${data.count} 首`)
   } catch (e) {
     toast(e.message)
   }
@@ -477,7 +499,7 @@ $('#btn-artist-search').addEventListener('click', async () => {
           return `<div class="item">
           <div class="meta"><div class="title">${escapeHtml(name)}</div><div class="sub">${escapeHtml(source)}</div></div>
           <div class="actions"><button type="button" data-id="${escapeAttr(String(id))}" data-name="${escapeAttr(name)}" class="btn-artist-songs">查看</button>
-          <button type="button" data-id="${escapeAttr(String(id))}" class="btn-artist-dl primary">下载全部</button></div>
+          <button type="button" data-id="${escapeAttr(String(id))}" data-name="${escapeAttr(name)}" class="btn-artist-dl primary">下载全部</button></div>
         </div>`
         })
         .join('') || emptyHtml('无结果')
@@ -493,9 +515,9 @@ $('#btn-artist-search').addEventListener('click', async () => {
             onDownloadAll: async () => {
               const r = await api('/download/artist', {
                 method: 'POST',
-                body: JSON.stringify({ source, id: btn.dataset.id }),
+                body: JSON.stringify({ source, id: btn.dataset.id, name: btn.dataset.name }),
               })
-              toast(`歌手任务 #${r.job.id}，${r.count} 首`)
+              toast(`#${r.job.id} · ${r.job.title || btn.dataset.name || '歌手'}，${r.count} 首`)
             },
           })
         } catch (e) {
@@ -508,9 +530,9 @@ $('#btn-artist-search').addEventListener('click', async () => {
         try {
           const data = await api('/download/artist', {
             method: 'POST',
-            body: JSON.stringify({ source, id: btn.dataset.id }),
+            body: JSON.stringify({ source, id: btn.dataset.id, name: btn.dataset.name }),
           })
-          toast(`歌手任务 #${data.job.id}，${data.count} 首`)
+          toast(`#${data.job.id} · ${data.job.title || btn.dataset.name || '歌手'}，${data.count} 首`)
         } catch (e) {
           toast(e.message)
         }
@@ -536,7 +558,7 @@ async function loadBoards() {
           const name = b.name || bangid
           return `<div class="item"><div class="meta"><div class="title">${escapeHtml(name)}</div></div>
           <div class="actions"><button type="button" class="btn-board-open" data-id="${escapeAttr(String(bangid))}" data-name="${escapeAttr(String(name))}">查看</button>
-          <button type="button" class="btn-board-dl primary" data-id="${escapeAttr(String(bangid))}">下载</button></div></div>`
+          <button type="button" class="btn-board-dl primary" data-id="${escapeAttr(String(bangid))}" data-name="${escapeAttr(String(name))}">下载</button></div></div>`
         })
         .join('') || emptyHtml('无榜单')
 
@@ -555,9 +577,9 @@ async function loadBoards() {
             onDownloadAll: async () => {
               const r = await api('/download/leaderboard', {
                 method: 'POST',
-                body: JSON.stringify({ source, bangid: btn.dataset.id }),
+                body: JSON.stringify({ source, bangid: btn.dataset.id, name: btn.dataset.name }),
               })
-              toast(`榜单任务 #${r.job.id}，${r.count} 首`)
+              toast(`#${r.job.id} · ${r.job.title || btn.dataset.name || '榜单'}，${r.count} 首`)
             },
           })
         } catch (e) {
@@ -570,9 +592,9 @@ async function loadBoards() {
         try {
           const data = await api('/download/leaderboard', {
             method: 'POST',
-            body: JSON.stringify({ source, bangid: btn.dataset.id }),
+            body: JSON.stringify({ source, bangid: btn.dataset.id, name: btn.dataset.name }),
           })
-          toast(`榜单任务 #${data.job.id}，${data.count} 首`)
+          toast(`#${data.job.id} · ${data.job.title || btn.dataset.name || '榜单'}，${data.count} 首`)
         } catch (e) {
           toast(e.message)
         }
@@ -607,228 +629,430 @@ function jobCardEl(id) {
 
 function clearJobDetail() {
   openJobId = null
-  openJobHtml = ''
   $$('#jobs-result .job-detail-box').forEach((el) => el.remove())
   $$('#jobs-result .job-card.open').forEach((el) => el.classList.remove('open'))
   $$('#jobs-result .btn-job-detail').forEach((btn) => btn.setAttribute('aria-expanded', 'false'))
 }
 
-function jobDetailHtml(job) {
-  const items = (job.items || [])
-    .map((i) => `${padStatus(i.status)} | ${i.name} - ${i.singer}\n    ${i.message || ''} ${i.file_path || ''}`)
-    .join('\n')
-  return `<b>任务 #${job.id}</b> · ${escapeHtml(job.status || '')} · ${job.progress || 0}/${job.total || 0}\n${items || '无条目'}`
+function statusBadge(status) {
+  return `<span class="badge status-${escapeHtml(status || '')}">${escapeHtml(status || '')}</span>`
 }
 
-async function loadJobDetail(id, { keepScroll = true, notify = false } = {}) {
-  if (!id) return
-  const card = jobCardEl(id)
-  if (!card) {
-    clearJobDetail()
-    return
+function jobItemRowHtml(i) {
+  const canCancel = ['pending', 'running'].includes(i.status)
+  return `<div class="job-item-row" data-item-id="${i.id}">
+    <div class="meta">
+      <div class="title">${statusBadge(i.status)} ${escapeHtml(i.name || '')} · ${escapeHtml(i.singer || '')}</div>
+      <div class="sub">${escapeHtml(i.message || '')}${i.file_path ? ` · ${escapeHtml(i.file_path)}` : ''}</div>
+    </div>
+    <div class="actions">
+      ${canCancel ? `<button type="button" class="btn-item-cancel" data-item-id="${i.id}">取消</button>` : ''}
+    </div>
+  </div>`
+}
+
+function bindJobItemCancels(scope) {
+  scope.querySelectorAll('.btn-item-cancel').forEach((btn) => {
+    if (btn.dataset.bound) return
+    btn.dataset.bound = '1'
+    btn.addEventListener('click', async () => {
+      try {
+        await api(`/jobs/items/${btn.dataset.itemId}/cancel`, { method: 'POST', body: '{}' })
+        toast('已取消该条目')
+        if (openJobId) await patchJobDetail(openJobId)
+        await loadJobs({ soft: true })
+      } catch (e) {
+        toast(e.message)
+      }
+    })
+  })
+}
+
+function patchJobItemRows(box, items) {
+  const scrollTop = box.scrollTop
+  const existing = new Map([...box.querySelectorAll('.job-item-row')].map((el) => [el.dataset.itemId, el]))
+  const seen = new Set()
+  for (const i of items) {
+    const id = String(i.id)
+    seen.add(id)
+    let row = existing.get(id)
+    if (!row) {
+      const wrap = document.createElement('div')
+      wrap.innerHTML = jobItemRowHtml(i)
+      row = wrap.firstElementChild
+      box.appendChild(row)
+    } else {
+      const title = row.querySelector('.title')
+      const sub = row.querySelector('.sub')
+      const nextTitle = `${i.status} ${i.name || ''} · ${i.singer || ''}`
+      const nextSub = `${i.message || ''}${i.file_path ? ` · ${i.file_path}` : ''}`
+      // update via html for badge
+      const wantTitle = `${statusBadge(i.status)} ${escapeHtml(i.name || '')} · ${escapeHtml(i.singer || '')}`
+      if (title && title.dataset.sig !== nextTitle) {
+        title.innerHTML = wantTitle
+        title.dataset.sig = nextTitle
+      }
+      if (sub && sub.dataset.sig !== nextSub) {
+        sub.textContent = nextSub
+        sub.dataset.sig = nextSub
+      }
+      const actions = row.querySelector('.actions')
+      const canCancel = ['pending', 'running'].includes(i.status)
+      const hasBtn = !!row.querySelector('.btn-item-cancel')
+      if (canCancel && !hasBtn) {
+        actions.innerHTML = `<button type="button" class="btn-item-cancel" data-item-id="${i.id}">取消</button>`
+      } else if (!canCancel && hasBtn) {
+        actions.innerHTML = ''
+      }
+    }
   }
+  for (const [id, el] of existing) {
+    if (!seen.has(id)) el.remove()
+  }
+  bindJobItemCancels(box)
+  box.scrollTop = scrollTop
+}
+
+async function patchJobDetail(id) {
+  const card = jobCardEl(id)
+  if (!card) return
   let box = card.querySelector('.job-detail-box')
-  const scrollTop = keepScroll && box ? box.scrollTop : 0
+  if (!box) {
+    box = document.createElement('div')
+    box.className = 'job-detail-box'
+    card.appendChild(box)
+  }
+  card.classList.add('open')
+  card.querySelector('.btn-job-detail')?.setAttribute('aria-expanded', 'true')
   try {
     const job = await api(`/jobs/${id}`)
     if (String(openJobId) !== String(id)) return
-    $$('#jobs-result .job-card').forEach((el) => {
-      if (el === card) return
-      el.classList.remove('open')
-      el.querySelector('.job-detail-box')?.remove()
-      el.querySelector('.btn-job-detail')?.setAttribute('aria-expanded', 'false')
-    })
-    card.classList.add('open')
-    card.querySelector('.btn-job-detail')?.setAttribute('aria-expanded', 'true')
-    if (!box) {
-      box = document.createElement('div')
-      box.className = 'job-detail-box'
-      card.appendChild(box)
-    }
-    box.innerHTML = jobDetailHtml(job)
-    openJobHtml = box.innerHTML
-    if (keepScroll) box.scrollTop = scrollTop
+    patchJobItemRows(box, job.items || [])
   } catch (e) {
-    if (String(openJobId) !== String(id)) return
-    clearJobDetail()
-    if (notify) toast(e.message)
+    if (String(openJobId) === String(id)) toast(e.message)
   }
 }
 
-async function loadJobs() {
-  try {
-    const openBox = $('#jobs-result .job-card.open .job-detail-box')
-    const scrollTop = openBox?.scrollTop || 0
-    const data = await api('/jobs')
-    $('#jobs-result').innerHTML =
-      (data.list || [])
-        .map((j) => {
-          const canRetry = ['failed', 'cancelled', 'completed'].includes(j.status)
-          const canCancel = ['running', 'pending'].includes(j.status)
-          const pct = j.total ? Math.round((j.progress / j.total) * 100) : 0
-          const isOpen = String(openJobId) === String(j.id)
-          return `<div class="item job-card${isOpen ? ' open' : ''}" data-id="${j.id}">
-          <div class="job-card-row">
-            <div class="meta">
-              <div class="title">#${j.id} ${escapeHtml(j.type)} <span class="badge status-${escapeHtml(j.status)}">${escapeHtml(j.status)}</span></div>
-              <div class="sub">${j.progress}/${j.total}（${pct}%） · ${escapeHtml(j.message || '')}</div>
-            </div>
-            <div class="actions">
-              <button type="button" data-id="${j.id}" class="btn-job-detail" aria-expanded="${isOpen ? 'true' : 'false'}">详情</button>
-              ${canCancel ? `<button type="button" data-id="${j.id}" class="btn-job-cancel">取消</button>` : ''}
-              ${canRetry ? `<button type="button" data-id="${j.id}" class="btn-job-retry">重试失败</button>` : ''}
-              <button type="button" data-id="${j.id}" class="btn-job-del">删除</button>
-            </div>
-          </div>
-          ${isOpen ? `<div class="job-detail-box">${openJobHtml || '加载中…'}</div>` : ''}
-        </div>`
-        })
-        .join('') || emptyHtml('暂无任务')
+function jobDisplayTitle(j) {
+  return j.title || j.payload?.title || j.payload?.name || j.type || '任务'
+}
 
-    $$('.btn-job-detail').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const id = btn.dataset.id
-        if (String(openJobId) === String(id)) {
-          clearJobDetail()
-          return
-        }
-        openJobId = id
-        await loadJobDetail(id, { keepScroll: false, notify: true })
-      })
-    })
-    $$('.btn-job-cancel').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        try {
-          await api(`/jobs/${btn.dataset.id}/cancel`, { method: 'POST', body: '{}' })
-          toast('已取消未完成条目')
-          loadJobs()
-        } catch (e) {
-          toast(e.message)
-        }
-      })
-    })
-    $$('.btn-job-retry').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        try {
-          await api(`/jobs/${btn.dataset.id}/retry`, { method: 'POST', body: '{}' })
-          toast('已重新入队失败项')
-          loadJobs()
-        } catch (e) {
-          toast(e.message)
-        }
-      })
-    })
-    $$('.btn-job-del').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        if (!confirm(`删除任务 #${btn.dataset.id}？`)) return
-        try {
-          await api(`/jobs/${btn.dataset.id}`, { method: 'DELETE' })
-          if (String(openJobId) === String(btn.dataset.id)) clearJobDetail()
-          loadJobs()
-        } catch (e) {
-          toast(e.message)
+function renderJobCardHtml(j, isOpen) {
+  const canRetry = ['failed', 'cancelled', 'completed'].includes(j.status)
+  const canCancel = ['running', 'pending'].includes(j.status)
+  const pct = j.total ? Math.round((j.progress / j.total) * 100) : 0
+  const label = jobDisplayTitle(j)
+  return `<div class="job-card-row">
+    <div class="meta">
+      <div class="title">#${j.id} ${escapeHtml(label)} ${statusBadge(j.status)}</div>
+      <div class="sub job-progress">${j.progress}/${j.total}（${pct}%） · ${escapeHtml(j.message || '')}</div>
+    </div>
+    <div class="actions">
+      <button type="button" data-id="${j.id}" class="btn-job-detail" aria-expanded="${isOpen ? 'true' : 'false'}">${isOpen ? '收起' : '详情'}</button>
+      ${canCancel ? `<button type="button" data-id="${j.id}" class="btn-job-cancel">全部取消</button>` : ''}
+      ${canRetry ? `<button type="button" data-id="${j.id}" class="btn-job-retry">重试失败</button>` : ''}
+      <button type="button" data-id="${j.id}" class="btn-job-del">删除</button>
+    </div>
+  </div>`
+}
+
+function bindJobCardActions(root = $('#jobs-result')) {
+  root.querySelectorAll('.btn-job-detail').forEach((btn) => {
+    if (btn.dataset.bound) return
+    btn.dataset.bound = '1'
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id
+      if (String(openJobId) === String(id)) {
+        clearJobDetail()
+        btn.textContent = '详情'
+        return
+      }
+      openJobId = id
+      $$('#jobs-result .job-card').forEach((el) => {
+        if (el.dataset.id === String(id)) return
+        el.classList.remove('open')
+        el.querySelector('.job-detail-box')?.remove()
+        const b = el.querySelector('.btn-job-detail')
+        if (b) {
+          b.setAttribute('aria-expanded', 'false')
+          b.textContent = '详情'
         }
       })
+      btn.textContent = '收起'
+      await patchJobDetail(id)
     })
-    if (openJobId) {
-      await loadJobDetail(openJobId)
-      const next = $('#jobs-result .job-card.open .job-detail-box')
-      if (next) next.scrollTop = scrollTop
+  })
+  root.querySelectorAll('.btn-job-cancel').forEach((btn) => {
+    if (btn.dataset.bound) return
+    btn.dataset.bound = '1'
+    btn.addEventListener('click', async () => {
+      try {
+        await api(`/jobs/${btn.dataset.id}/cancel`, { method: 'POST', body: '{}' })
+        toast('已取消未完成条目')
+        loadJobs({ soft: true })
+      } catch (e) {
+        toast(e.message)
+      }
+    })
+  })
+  root.querySelectorAll('.btn-job-retry').forEach((btn) => {
+    if (btn.dataset.bound) return
+    btn.dataset.bound = '1'
+    btn.addEventListener('click', async () => {
+      try {
+        await api(`/jobs/${btn.dataset.id}/retry`, { method: 'POST', body: '{}' })
+        toast('已重新入队失败项')
+        loadJobs({ soft: true })
+      } catch (e) {
+        toast(e.message)
+      }
+    })
+  })
+  root.querySelectorAll('.btn-job-del').forEach((btn) => {
+    if (btn.dataset.bound) return
+    btn.dataset.bound = '1'
+    btn.addEventListener('click', async () => {
+      if (!confirm(`删除任务 #${btn.dataset.id}？`)) return
+      try {
+        await api(`/jobs/${btn.dataset.id}`, { method: 'DELETE' })
+        if (String(openJobId) === String(btn.dataset.id)) clearJobDetail()
+        loadJobs({ soft: false })
+      } catch (e) {
+        toast(e.message)
+      }
+    })
+  })
+}
+
+async function loadJobs({ soft = true } = {}) {
+  try {
+    const data = await api('/jobs')
+    const list = data.list || []
+    const box = $('#jobs-result')
+    const existingIds = [...box.querySelectorAll('.job-card')].map((el) => el.dataset.id)
+    const nextIds = list.map((j) => String(j.id))
+    const sameShape = soft && existingIds.length === nextIds.length && existingIds.every((id, i) => id === nextIds[i])
+
+    if (!sameShape) {
+      box.innerHTML =
+        list
+          .map((j) => {
+            const isOpen = String(openJobId) === String(j.id)
+            return `<div class="item job-card${isOpen ? ' open' : ''}" data-id="${j.id}">
+              ${renderJobCardHtml(j, isOpen)}
+              ${isOpen ? `<div class="job-detail-box"></div>` : ''}
+            </div>`
+          })
+          .join('') || emptyHtml('暂无任务')
+      bindJobCardActions(box)
+    } else {
+      for (const j of list) {
+        const card = jobCardEl(j.id)
+        if (!card) continue
+        const isOpen = String(openJobId) === String(j.id)
+        const pct = j.total ? Math.round((j.progress / j.total) * 100) : 0
+        const title = card.querySelector('.title')
+        const sub = card.querySelector('.job-progress')
+        const sig = `${j.status}|${j.progress}|${j.total}|${j.message || ''}|${jobDisplayTitle(j)}`
+        if (card.dataset.sig !== sig) {
+          if (title) title.innerHTML = `#${j.id} ${escapeHtml(jobDisplayTitle(j))} ${statusBadge(j.status)}`
+          if (sub) sub.textContent = `${j.progress}/${j.total}（${pct}%） · ${j.message || ''}`
+          card.dataset.sig = sig
+          // refresh action buttons when status changes
+          const actions = card.querySelector('.job-card-row .actions')
+          if (actions) {
+            const canRetry = ['failed', 'cancelled', 'completed'].includes(j.status)
+            const canCancel = ['running', 'pending'].includes(j.status)
+            actions.innerHTML = `
+              <button type="button" data-id="${j.id}" class="btn-job-detail" aria-expanded="${isOpen ? 'true' : 'false'}">${isOpen ? '收起' : '详情'}</button>
+              ${canCancel ? `<button type="button" data-id="${j.id}" class="btn-job-cancel">全部取消</button>` : ''}
+              ${canRetry ? `<button type="button" data-id="${j.id}" class="btn-job-retry">重试失败</button>` : ''}
+              <button type="button" data-id="${j.id}" class="btn-job-del">删除</button>`
+            bindJobCardActions(card)
+          }
+        }
+      }
     }
+
+    if (openJobId) await patchJobDetail(openJobId)
   } catch (e) {
     toast(e.message)
   }
 }
-function padStatus(s) {
-  return String(s || '').padEnd(8, ' ')
-}
-$('#btn-jobs-refresh').addEventListener('click', loadJobs)
+$('#btn-jobs-refresh').addEventListener('click', () => loadJobs({ soft: false }))
 $('#btn-jobs-clear').addEventListener('click', async () => {
   try {
     const r = await api('/jobs/clear-finished', { method: 'POST', body: '{}' })
     toast(`已清理 ${r.cleared} 个任务`)
     clearJobDetail()
-    loadJobs()
+    loadJobs({ soft: false })
   } catch (e) {
     toast(e.message)
   }
 })
 
 // ---- sources ----
-async function loadSources() {
-  try {
-    const data = await api('/sources')
-    const list = data.list || []
-    $('#sources-result').innerHTML =
-      list
-        .map(
-          (s, idx) => `<div class="item" data-id="${escapeAttr(s.id)}">
+function sourceOrderToolbar(editing) {
+  $('#btn-src-edit-order').hidden = editing
+  $('#btn-src-save-order').hidden = !editing
+  $('#btn-src-cancel-order').hidden = !editing
+  $('#sources-order-hint').hidden = !editing
+  $('#btn-sources-reload').disabled = editing
+  $('#btn-source-import').disabled = editing
+  $('#source-url').disabled = editing
+}
+
+function exitSourceEditMode(reload = true) {
+  sourceEditMode = false
+  sourceDraftList = []
+  sourceSavedIds = []
+  sourceOrderToolbar(false)
+  if (reload) loadSources()
+  else renderSourceList(sourceDraftList.length ? sourceDraftList : [])
+}
+
+function enterSourceEditMode(list) {
+  sourceEditMode = true
+  sourceDraftList = list.map((s) => ({ ...s }))
+  sourceSavedIds = list.map((s) => s.id)
+  sourceOrderToolbar(true)
+  renderSourceList(sourceDraftList)
+}
+
+function moveSourceDraft(id, dir) {
+  const ids = sourceDraftList.map((s) => s.id)
+  const i = ids.indexOf(id)
+  const j = i + dir
+  if (i < 0 || j < 0 || j >= sourceDraftList.length) return
+  const next = [...sourceDraftList]
+  ;[next[i], next[j]] = [next[j], next[i]]
+  sourceDraftList = next
+  renderSourceList(sourceDraftList)
+  const dirty = sourceDraftList.some((s, idx) => s.id !== sourceSavedIds[idx])
+  $('#btn-src-save-order').disabled = !dirty
+}
+
+function renderSourceList(list) {
+  const editing = sourceEditMode
+  $('#sources-result').innerHTML =
+    list
+      .map(
+        (s, idx) => `<div class="item${editing ? ' src-editing' : ''}" data-id="${escapeAttr(s.id)}">
         <div class="meta">
           <div class="title"><span class="src-rank">${idx + 1}</span>${escapeHtml(s.name)} <span class="badge ${s.enabled ? 'ok' : 'fail'}">${s.enabled ? '启用' : '禁用'}${s.loaded ? '' : ' · 未加载'}</span></div>
           <div class="sub">${escapeHtml(s.filename)} · v${escapeHtml(s.version || '-')} · ${(s.platforms || []).join(',')}</div>
         </div>
         <div class="actions">
-          <button type="button" class="btn-icon btn-src-up" data-id="${escapeAttr(s.id)}" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
-          <button type="button" class="btn-icon btn-src-down" data-id="${escapeAttr(s.id)}" title="下移" ${idx === list.length - 1 ? 'disabled' : ''}>↓</button>
+          ${editing ? `<button type="button" class="btn-icon btn-src-up" data-id="${escapeAttr(s.id)}" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
+          <button type="button" class="btn-icon btn-src-down" data-id="${escapeAttr(s.id)}" title="下移" ${idx === list.length - 1 ? 'disabled' : ''}>↓</button>` : `<button type="button" class="btn-icon btn-src-up" data-id="${escapeAttr(s.id)}" title="上移" hidden>↑</button>
+          <button type="button" class="btn-icon btn-src-down" data-id="${escapeAttr(s.id)}" title="下移" hidden>↓</button>`}
           <button type="button" data-id="${escapeAttr(s.id)}" class="btn-src-test">测试</button>
           <button type="button" data-id="${escapeAttr(s.id)}" data-enabled="${s.enabled ? 0 : 1}" class="btn-src-toggle">${s.enabled ? '禁用' : '启用'}</button>
           <button type="button" data-id="${escapeAttr(s.id)}" class="btn-src-del">删除</button>
         </div>
       </div>`
-        )
-        .join('') || emptyHtml('暂无音源')
+      )
+      .join('') || emptyHtml('暂无音源')
 
-    const reorderBy = async (id, dir) => {
-      const ids = list.map((s) => s.id)
-      const i = ids.indexOf(id)
-      const j = i + dir
-      if (i < 0 || j < 0 || j >= ids.length) return
-      ;[ids[i], ids[j]] = [ids[j], ids[i]]
-      await api('/sources/reorder', { method: 'POST', body: JSON.stringify({ ids }) })
-      loadSources()
-    }
+  if (editing) {
     $$('.btn-src-up').forEach((btn) => {
-      btn.addEventListener('click', () => reorderBy(btn.dataset.id, -1))
+      btn.addEventListener('click', () => moveSourceDraft(btn.dataset.id, -1))
     })
     $$('.btn-src-down').forEach((btn) => {
-      btn.addEventListener('click', () => reorderBy(btn.dataset.id, 1))
+      btn.addEventListener('click', () => moveSourceDraft(btn.dataset.id, 1))
     })
-    $$('.btn-src-test').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        btn.disabled = true
-        try {
-          const r = await api(`/sources/${encodeURIComponent(btn.dataset.id)}/test`, {
-            method: 'POST',
-            body: '{}',
-          })
-          toast(`✓ ${r.sourceName || ''} ${r.ms}ms · ${r.song?.name} · ${r.urlHost}`)
-        } catch (e) {
-          toast(`测试失败: ${e.message}`)
-        } finally {
-          btn.disabled = false
-        }
-      })
-    })
-    $$('.btn-src-toggle').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        await api('/sources/toggle', {
+    return
+  }
+
+  $$('.btn-src-test').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true
+      try {
+        const r = await api(`/sources/${encodeURIComponent(btn.dataset.id)}/test`, {
           method: 'POST',
-          body: JSON.stringify({ id: btn.dataset.id, enabled: btn.dataset.enabled === '1' }),
+          body: '{}',
         })
-        loadSources()
-      })
+        toast(`✓ ${r.sourceName || ''} ${r.ms}ms · ${r.song?.name} · ${r.urlHost}`)
+      } catch (e) {
+        toast(`测试失败: ${e.message}`)
+      } finally {
+        btn.disabled = false
+      }
     })
-    $$('.btn-src-del').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        if (!confirm('删除该音源？')) return
-        await api(`/sources/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' })
-        loadSources()
+  })
+  $$('.btn-src-toggle').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await api('/sources/toggle', {
+        method: 'POST',
+        body: JSON.stringify({ id: btn.dataset.id, enabled: btn.dataset.enabled === '1' }),
       })
+      loadSources()
     })
+  })
+  $$('.btn-src-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('删除该音源？')) return
+      await api(`/sources/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' })
+      loadSources()
+    })
+  })
+}
+
+async function loadSources() {
+  try {
+    const data = await api('/sources')
+    const list = data.list || []
+    if (sourceEditMode) {
+      sourceDraftList = list.map((s) => ({ ...s }))
+      sourceSavedIds = list.map((s) => s.id)
+      renderSourceList(sourceDraftList)
+      return
+    }
+    renderSourceList(list)
   } catch (e) {
     toast(e.message)
   }
 }
+
+$('#btn-src-edit-order')?.addEventListener('click', async () => {
+  try {
+    const data = await api('/sources')
+    const list = data.list || []
+    if (!list.length) return toast('暂无音源')
+    enterSourceEditMode(list)
+    $('#btn-src-save-order').disabled = true
+  } catch (e) {
+    toast(e.message)
+  }
+})
+
+$('#btn-src-cancel-order')?.addEventListener('click', () => {
+  exitSourceEditMode(true)
+  toast('已取消排序编辑')
+})
+
+$('#btn-src-save-order')?.addEventListener('click', async () => {
+  const ids = sourceDraftList.map((s) => s.id)
+  const dirty = ids.some((id, i) => id !== sourceSavedIds[i])
+  if (!dirty) {
+    exitSourceEditMode(true)
+    return
+  }
+  const btn = $('#btn-src-save-order')
+  btn.disabled = true
+  try {
+    await api('/sources/reorder', { method: 'POST', body: JSON.stringify({ ids }) })
+    toast('排序已保存')
+    sourceEditMode = false
+    sourceDraftList = []
+    sourceSavedIds = []
+    sourceOrderToolbar(false)
+    await loadSources()
+  } catch (e) {
+    toast(e.message)
+    btn.disabled = false
+  }
+})
 $('#btn-sources-reload').addEventListener('click', async () => {
   try {
     await api('/sources/reload', { method: 'POST', body: '{}' })
@@ -955,7 +1179,7 @@ $('#btn-fill-lyrics')?.addEventListener('click', async () => {
       body: JSON.stringify({ ids }),
     })
     if (!r.job) return toast(r.message || '无需处理')
-    toast(`补歌词任务 #${r.job.id}，共 ${r.count} 首`)
+    toast(`#${r.job.id} · ${r.job.title || '补歌词'}，共 ${r.count} 首`)
     switchTab('jobs')
   } catch (e) {
     toast(e.message)

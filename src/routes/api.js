@@ -221,6 +221,8 @@ export function createApiRouter() {
       const job = download.enqueueSongs(songs, {
         type: 'download',
         quality: req.body.quality || config.preferredQuality,
+        title: req.body.title,
+        payload: { name: req.body.name },
       })
       res.json(job)
     } catch (e) {
@@ -251,10 +253,11 @@ export function createApiRouter() {
         if (!list.length || data?.isEnd || list.length < (data?.limit || 1)) break
         page++
       }
+      const playlistName = req.body.name || info?.name || info?.info?.name
       const job = download.enqueueSongs(songs, {
         type: 'playlist',
         quality: quality || config.preferredQuality,
-        payload: { source, id, name: info?.name || info?.info?.name },
+        payload: { source, id, name: playlistName },
       })
       res.json({ job, count: songs.length })
     } catch (e) {
@@ -278,10 +281,11 @@ export function createApiRouter() {
         if (list.length < 100) break
         page++
       }
+      const artistName = req.body.name || songs[0]?.singer || songs[0]?.artist
       const job = download.enqueueSongs(songs, {
         type: 'artist',
         quality: quality || config.preferredQuality,
-        payload: { source, id },
+        payload: { source, id, name: artistName },
       })
       res.json({ job, count: songs.length })
     } catch (e) {
@@ -298,7 +302,7 @@ export function createApiRouter() {
       const job = download.enqueueSongs(songs, {
         type: 'leaderboard',
         quality: quality || config.preferredQuality,
-        payload: { source, bangid },
+        payload: { source, bangid, name: req.body.name },
       })
       res.json({ job, count: songs.length })
     } catch (e) {
@@ -318,6 +322,12 @@ export function createApiRouter() {
 
   router.post('/jobs/:id/cancel', (req, res) => {
     res.json(download.cancelJob(Number(req.params.id)))
+  })
+
+  router.post('/jobs/items/:itemId/cancel', (req, res) => {
+    const job = download.cancelJobItem(Number(req.params.itemId))
+    if (!job) return res.status(404).json({ error: 'not found' })
+    res.json(job)
   })
 
   router.post('/jobs/:id/retry', (req, res) => {
@@ -357,11 +367,13 @@ export function createApiRouter() {
     }
   })
 
-  router.post('/sources/reorder', async (req, res) => {
+  router.post('/sources/reorder', (req, res) => {
     try {
       const ids = req.body?.ids || []
+      if (!Array.isArray(ids) || !ids.length) {
+        return res.status(400).json({ error: 'ids required' })
+      }
       sources.reorderSources(ids)
-      await sources.reloadSources()
       res.json({ ok: true, list: sources.listSources() })
     } catch (e) {
       res.status(500).json({ error: e.message })

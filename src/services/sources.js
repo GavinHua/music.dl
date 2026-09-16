@@ -14,9 +14,11 @@ import {
   getWorkerApis,
   getMusicUrlViaWorkers,
   getLyricViaWorkers,
+  getMusicUrlCandidates,
+  applyWorkerSortOrder,
 } from '../userApi/pool.js'
 
-export { getMusicUrlViaWorkers as getMusicUrl, getLyricViaWorkers as getLyricFromSources }
+export { getMusicUrlViaWorkers as getMusicUrl, getLyricViaWorkers as getLyricFromSources, getMusicUrlCandidates }
 
 function readScript(filename) {
   return fs.readFileSync(path.join(config.sourceDir, filename), 'utf8')
@@ -144,6 +146,7 @@ export function setSourceEnabled(id, enabled) {
 
 export function reorderSources(ids) {
   sourcesRepo.reorder(ids)
+  applyWorkerSortOrder(ids)
 }
 
 export async function importSourceFromUrl(url) {

@@ -136,6 +136,15 @@ export function getWorkerApis() {
   }))
 }
 
+/** Update in-memory sort order without reloading workers. */
+export function applyWorkerSortOrder(ids) {
+  if (!Array.isArray(ids)) return
+  ids.forEach((id, i) => {
+    const state = children.get(id)
+    if (state) state.sortOrder = i
+  })
+}
+
 export function callWorkerRequest(id, action, source, info, timeoutMs = 20000) {
   const state = children.get(id)
   if (!state?.ready) return Promise.reject(new Error(`source ${id} not ready`))
@@ -166,6 +175,23 @@ export function callWorkerRequest(id, action, source, info, timeoutMs = 20000) {
 }
 
 export async function getMusicUrlViaWorkers(platform, songInfo, quality, { preferredOrder, excludeSourceIds = [], onlySourceId } = {}) {
+  const candidates = await getMusicUrlCandidates(platform, songInfo, quality, {
+    preferredOrder,
+    excludeSourceIds,
+    onlySourceId,
+    maxCandidates: 1,
+  })
+  if (!candidates.length) throw new Error(`解析播放地址失败`)
+  return candidates[0]
+}
+
+/** Collect up to maxCandidates playable URLs from enabled sources (same preferred quality first). */
+export async function getMusicUrlCandidates(
+  platform,
+  songInfo,
+  quality,
+  { preferredOrder, excludeSourceIds = [], onlySourceId, maxCandidates = 4 } = {}
+) {
   const exclude = new Set(excludeSourceIds)
   let list = [...children.values()]
     .filter((s) => s.enabled && s.ready && s.info.sources?.[platform] && !exclude.has(s.info.id))
@@ -190,13 +216,15 @@ export async function getMusicUrlViaWorkers(platform, songInfo, quality, { prefe
   if (!list.length) throw new Error(`没有启用的自定义源支持平台 ${platform}`)
 
   const qualities = buildQualityCandidates(songInfo, quality)
+  const found = []
   const errors = []
 
+  // Resolve preferred quality across sources in parallel first
   for (const q of qualities) {
-    for (const s of list) {
+    const tasks = list.map(async (s) => {
       const meta = s.info.sources[platform]
       const supported = meta?.qualitys || meta?.quality || []
-      if (supported.length && !supported.map(String).includes(String(q))) continue
+      if (supported.length && !supported.map(String).includes(String(q))) return null
       try {
         const url = await callWorkerRequest(s.info.id, 'musicUrl', platform, {
           type: q,
@@ -209,9 +237,19 @@ export async function getMusicUrlViaWorkers(platform, songInfo, quality, { prefe
       } catch (e) {
         errors.push(`${s.info.name}@${q}: ${e.message}`)
       }
+      return null
+    })
+    const results = await Promise.all(tasks)
+    for (const r of results) {
+      if (!r) continue
+      if (found.some((f) => f.sourceId === r.sourceId || f.url === r.url)) continue
+      found.push(r)
+      if (found.length >= maxCandidates) return found
     }
   }
-  throw new Error(`解析播放地址失败: ${errors.slice(0, 8).join('; ')}`)
+
+  if (!found.length) throw new Error(`解析播放地址失败: ${errors.slice(0, 8).join('; ')}`)
+  return found
 }
 
 export async function getLyricViaWorkers(platform, songInfo) {

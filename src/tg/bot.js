@@ -82,6 +82,7 @@ export function startTelegramBot() {
     try {
       const detected = music.detectPlaylistSource(input)
       const songs = []
+      let info = null
       let page = 1
       while (page <= 20) {
         const data = await music.getSongListDetail({
@@ -89,6 +90,7 @@ export function startTelegramBot() {
           id: detected.id,
           page,
         })
+        info = info || data
         const list = data?.list || []
         songs.push(...list)
         if (!list.length || data?.isEnd) break
@@ -97,9 +99,12 @@ export function startTelegramBot() {
       const job = download.enqueueSongs(songs, {
         type: 'playlist',
         quality: config.preferredQuality,
-        payload: detected,
+        payload: {
+          ...detected,
+          name: info?.name || info?.info?.name,
+        },
       })
-      await ctx.reply(`歌单已入队 #${job.id}，共 ${songs.length} 首`)
+      await ctx.reply(`歌单「${job.title || '歌单'}」已入队 #${job.id}，共 ${songs.length} 首`)
     } catch (e) {
       await ctx.reply(`失败: ${e.message}`)
     }
@@ -121,12 +126,13 @@ export function startTelegramBot() {
         if (list.length < 100) break
         page++
       }
+      const artistName = songs[0]?.singer || songs[0]?.artist
       const job = download.enqueueSongs(songs, {
         type: 'artist',
         quality: config.preferredQuality,
-        payload: { source, id },
+        payload: { source, id, name: artistName },
       })
-      await ctx.reply(`歌手歌曲已入队 #${job.id}，共 ${songs.length} 首`)
+      await ctx.reply(`歌手「${job.title || artistName || '未知'}」已入队 #${job.id}，共 ${songs.length} 首`)
     } catch (e) {
       await ctx.reply(`失败: ${e.message}`)
     }
@@ -149,7 +155,7 @@ export function startTelegramBot() {
     const list = download.listJobs().slice(0, 10)
     if (!list.length) return ctx.reply('暂无任务')
     const lines = list.map(
-      (j) => `#${j.id} ${j.type} ${j.status} ${j.progress}/${j.total} ${j.message || ''}`
+      (j) => `#${j.id} ${j.title || j.type} ${j.status} ${j.progress}/${j.total} ${j.message || ''}`
     )
     await ctx.reply(lines.join('\n'))
   })

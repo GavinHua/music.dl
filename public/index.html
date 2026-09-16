@@ -159,6 +159,9 @@
         </div>
         <div class="toolbar sticky-bar wrap">
           <button type="button" id="btn-sources-reload">重新加载</button>
+          <button type="button" id="btn-src-edit-order">编辑排序</button>
+          <button type="button" id="btn-src-save-order" class="primary" hidden>保存排序</button>
+          <button type="button" id="btn-src-cancel-order" hidden>取消</button>
           <div class="field grow">
             <input id="source-url" placeholder="从 URL 导入音源脚本" />
           </div>
@@ -168,6 +171,7 @@
             <input type="file" id="source-file" accept=".js,text/javascript" hidden />
           </label>
         </div>
+        <div id="sources-order-hint" class="hint" hidden>排序编辑中：调整顺序后点「保存排序」一次性生效（无需重载音源）</div>
         <div id="sources-result" class="list"></div>
       </section>
 

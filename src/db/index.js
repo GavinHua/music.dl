@@ -262,6 +262,11 @@ export const jobsRepo = {
       .all(jobId)
       .map((i) => ({ ...i, music_info: safeJson(i.music_info) }))
   },
+  getItem(id) {
+    const i = getDb().prepare('SELECT * FROM job_items WHERE id = ?').get(id)
+    if (!i) return null
+    return { ...i, music_info: safeJson(i.music_info) }
+  },
   nextPendingItems(limit = 10) {
     return getDb()
       .prepare(

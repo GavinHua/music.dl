@@ -3,7 +3,7 @@ import path from 'node:path'
 import needle from 'needle'
 import { config } from '../config.js'
 import { jobsRepo, libraryRepo } from '../db/index.js'
-import { getMusicUrl, getLyricFromSources } from './sources.js'
+import { getMusicUrlCandidates, getLyricFromSources } from './sources.js'
 import { getLyric } from './music.js'
 import { embedLyric } from './tags.js'
 import { matchesFilterWords } from './settings.js'
@@ -20,7 +20,65 @@ import {
 let running = 0
 let pumpScheduled = false
 
-export function enqueueSongs(songs, { type = 'download', quality, payload = {} } = {}) {
+/** itemId -> { aborted, abort(), destroy() } */
+const activeDownloads = new Map()
+
+const SLOW_CHECK_MS = 12_000
+const SLOW_MIN_BYTES = 200 * 1024 // ~17KB/s average
+const PROBE_BYTES = 48 * 1024
+const PROBE_TIMEOUT_MS = 8_000
+const MAX_CANDIDATES = 4
+
+function songLabel(song) {
+  if (!song || typeof song !== 'object') return ''
+  return song.name || song.songname || song.title || ''
+}
+
+function songSinger(song) {
+  if (!song || typeof song !== 'object') return ''
+  return song.singer || song.artist || ''
+}
+
+export function buildJobTitle(type, payload = {}, songs = []) {
+  if (payload.title) return String(payload.title)
+  if (payload.name) return String(payload.name)
+  if (type === 'lyric_fill') {
+    if (songs.length === 1) {
+      const name = songLabel(songs[0])
+      return name ? `补歌词 · ${name}` : '补歌词'
+    }
+    return songs.length ? `补歌词 · ${songs.length} 首` : '补歌词'
+  }
+  if (songs.length === 1) {
+    const name = songLabel(songs[0])
+    const singer = songSinger(songs[0])
+    if (name && singer) return `${name} · ${singer}`
+    return name || '单曲下载'
+  }
+  if (songs.length > 1) {
+    const first = songLabel(songs[0]) || '批量'
+    return `${first} 等 ${songs.length} 首`
+  }
+  const fallback = {
+    playlist: '歌单下载',
+    artist: '歌手下载',
+    leaderboard: '榜单下载',
+    download: '下载',
+    tg: 'Telegram 下载',
+    lyric_fill: '补歌词',
+  }
+  return fallback[type] || type || '任务'
+}
+
+function withJobTitle(job, items = null) {
+  if (!job) return job
+  const payload = job.payload || {}
+  if (payload.title) return { ...job, title: String(payload.title) }
+  const list = items ?? []
+  return { ...job, title: buildJobTitle(job.type, payload, list) }
+}
+
+export function enqueueSongs(songs, { type = 'download', quality, payload = {}, title } = {}) {
   const q = quality || config.preferredQuality
   const incoming = Array.isArray(songs) ? songs : []
   const filteredOut = []
@@ -34,10 +92,13 @@ export function enqueueSongs(songs, { type = 'download', quality, payload = {} }
     kept.push(musicInfo)
   }
 
+  const allSongs = [...kept, ...filteredOut]
+  const jobTitle = title || buildJobTitle(type, payload, allSongs.length ? allSongs : incoming)
   const jobId = jobsRepo.create({
     type,
     payload: {
       ...payload,
+      title: jobTitle,
       quality: q,
       filtered: filteredOut.length,
       filterWords: [...(config.filterWords || [])],
@@ -72,15 +133,13 @@ export function enqueueSongs(songs, { type = 'download', quality, payload = {} }
     })
   }
 
-  // addItem defaults status to pending then spreads item — ensure skipped stuck
-  // (status is in INSERT columns via @status)
   jobsRepo.update(jobId, {
     status: kept.length ? 'running' : 'completed',
     message: filteredOut.length ? `filtered ${filteredOut.length}, queue ${kept.length}` : '',
     progress: filteredOut.length,
   })
   schedulePump()
-  return jobsRepo.get(jobId)
+  return withJobTitle(jobsRepo.get(jobId))
 }
 
 function normalizeIncomingSong(song) {
@@ -112,9 +171,15 @@ async function pump() {
     running++
     processItem(item)
       .catch((e) => {
-        jobsRepo.updateItem(item.id, { status: 'failed', message: e.message || String(e) })
+        const msg = e?.message || String(e)
+        if (msg === 'cancelled' || isItemCancelled(item.id)) {
+          jobsRepo.updateItem(item.id, { status: 'cancelled', message: 'cancelled by user' })
+        } else {
+          jobsRepo.updateItem(item.id, { status: 'failed', message: msg })
+        }
       })
       .finally(() => {
+        activeDownloads.delete(item.id)
         running--
         refreshJob(item.job_id)
         schedulePump()
@@ -122,10 +187,45 @@ async function pump() {
   }
 }
 
+function createActiveHandle(itemId) {
+  const handle = {
+    aborted: false,
+    req: null,
+    out: null,
+    abort() {
+      this.aborted = true
+      try {
+        this.req?.destroy()
+      } catch {}
+      try {
+        this.out?.destroy()
+      } catch {}
+    },
+  }
+  activeDownloads.set(itemId, handle)
+  return handle
+}
+
+function isItemCancelled(itemId) {
+  if (activeDownloads.get(itemId)?.aborted) return true
+  const row = jobsRepo.getItem(itemId)
+  return row?.status === 'cancelled'
+}
+
+function assertNotCancelled(itemId) {
+  if (isItemCancelled(itemId)) {
+    const err = new Error('cancelled')
+    throw err
+  }
+}
+
 async function processItem(item) {
+  const handle = createActiveHandle(item.id)
   const musicInfo = item.music_info || {}
   const targetQuality = item.quality || config.preferredQuality
   const decision = decideDownload(musicInfo, targetQuality)
+
+  assertNotCancelled(item.id)
 
   if (decision.action === 'skip') {
     jobsRepo.updateItem(item.id, {
@@ -138,6 +238,7 @@ async function processItem(item) {
 
   if (decision.action === 'lyric_only') {
     const ok = await saveLyric(musicInfo, decision.existing.file_path)
+    assertNotCancelled(item.id)
     if (ok) {
       libraryRepo.upsert({
         platform: decision.existing.platform,
@@ -168,24 +269,34 @@ async function processItem(item) {
   const platform = musicInfo.source
   if (!platform) throw new Error('缺少平台 source')
 
-  const tried = []
+  jobsRepo.updateItem(item.id, { message: 'resolving sources…' })
+  let candidates = []
+  try {
+    candidates = await getMusicUrlCandidates(platform, musicInfo, targetQuality, {
+      maxCandidates: MAX_CANDIDATES,
+    })
+  } catch (e) {
+    throw e
+  }
+  assertNotCancelled(item.id)
+
+  jobsRepo.updateItem(item.id, { message: `probing ${candidates.length} sources…` })
+  const ranked = await rankCandidatesByProbe(candidates, handle)
+  assertNotCancelled(item.id)
+
   let lastErr = null
   let resolved = null
   let abs = null
   let rel = null
+  const tried = []
 
-  for (let attempt = 0; attempt < 6; attempt++) {
+  for (const cand of ranked) {
+    assertNotCancelled(item.id)
+    if (tried.includes(cand.sourceId)) continue
+    tried.push(cand.sourceId)
     try {
-      resolved = await getMusicUrl(platform, musicInfo, targetQuality, {
-        excludeSourceIds: tried,
-      })
-      if (tried.includes(resolved.sourceId)) {
-        lastErr = new Error('no more sources')
-        break
-      }
-      tried.push(resolved.sourceId)
-      const ext = extFromUrlOrQuality(resolved.url, resolved.quality)
-      rel = buildRelativePath(musicInfo, resolved.quality, ext)
+      const ext = extFromUrlOrQuality(cand.url, cand.quality)
+      rel = buildRelativePath(musicInfo, cand.quality, ext)
       abs = absoluteMusicPath(rel)
       ensureParentDir(abs)
 
@@ -199,24 +310,38 @@ async function processItem(item) {
       }
 
       const tmp = `${abs}.part`
-      await downloadFile(resolved.url, tmp)
+      jobsRepo.updateItem(item.id, {
+        message: `downloading via ${cand.sourceName} @ ${cand.quality}${cand.bytesPerSec ? ` (~${formatSpeed(cand.bytesPerSec)})` : ''}`,
+      })
+      await downloadFile(cand.url, tmp, {
+        handle,
+        itemId: item.id,
+        timeoutMs: config.downloadTimeoutMs,
+        enableSlowSwitch: ranked.length > 1 && tried.length < ranked.length,
+      })
       fs.renameSync(tmp, abs)
+      resolved = cand
       lastErr = null
       break
     } catch (e) {
       lastErr = e
+      if (e?.message === 'cancelled') throw e
       if (abs) {
         try {
           fs.unlinkSync(`${abs}.part`)
         } catch {}
       }
-      console.warn(`[download] retry after: ${e.message}`)
+      console.warn(`[download] switch source after: ${e.message}`)
+      jobsRepo.updateItem(item.id, {
+        message: `${cand.sourceName} failed (${e.message}), trying next…`,
+      })
     }
   }
+
   if (lastErr || !resolved || !abs) throw lastErr || new Error('download failed')
+  assertNotCancelled(item.id)
 
   const stat = fs.statSync(abs)
-
   const lyricOk = await saveLyric(musicInfo, rel)
   upsertLibraryRecord({
     musicInfo,
@@ -231,6 +356,81 @@ async function processItem(item) {
     message: `ok via ${resolved.sourceName} @ ${resolved.quality}`,
     file_path: rel,
     quality: resolved.quality,
+  })
+}
+
+function formatSpeed(bps) {
+  if (!bps || bps < 1024) return `${Math.round(bps || 0)} B/s`
+  if (bps < 1024 * 1024) return `${(bps / 1024).toFixed(0)} KB/s`
+  return `${(bps / 1024 / 1024).toFixed(1)} MB/s`
+}
+
+async function rankCandidatesByProbe(candidates, handle) {
+  if (candidates.length <= 1) return candidates
+  const probed = await Promise.all(
+    candidates.map(async (c) => {
+      if (handle.aborted) return { ...c, bytesPerSec: 0, probeOk: false }
+      try {
+        const speed = await probeUrlSpeed(c.url, handle)
+        return { ...c, bytesPerSec: speed, probeOk: speed > 0 }
+      } catch {
+        return { ...c, bytesPerSec: 0, probeOk: false }
+      }
+    })
+  )
+  probed.sort((a, b) => (b.bytesPerSec || 0) - (a.bytesPerSec || 0))
+  const ok = probed.filter((p) => p.probeOk)
+  return ok.length ? ok : candidates
+}
+
+function probeUrlSpeed(url, handle) {
+  return new Promise((resolve, reject) => {
+    let bytes = 0
+    const started = Date.now()
+    let settled = false
+    const finish = (fn, arg) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try {
+        req.destroy()
+      } catch {}
+      fn(arg)
+    }
+    const timer = setTimeout(() => {
+      if (bytes > 0) finish(resolve, (bytes / Math.max(Date.now() - started, 1)) * 1000)
+      else finish(reject, new Error('probe timeout'))
+    }, PROBE_TIMEOUT_MS)
+
+    const req = needle.get(url, {
+      follow_max: 5,
+      open_timeout: 8_000,
+      response_timeout: PROBE_TIMEOUT_MS,
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Range: `bytes=0-${PROBE_BYTES - 1}`,
+      },
+    })
+    handle.req = req
+    req.on('header', (statusCode) => {
+      if (statusCode >= 400) finish(reject, new Error(`HTTP ${statusCode}`))
+    })
+    req.on('data', (chunk) => {
+      if (handle.aborted) return finish(reject, new Error('cancelled'))
+      bytes += chunk.length
+      if (bytes >= PROBE_BYTES) {
+        const elapsed = Math.max(Date.now() - started, 1)
+        finish(resolve, (bytes / elapsed) * 1000)
+      }
+    })
+    req.on('end', () => {
+      if (bytes > 0) {
+        const elapsed = Math.max(Date.now() - started, 1)
+        finish(resolve, (bytes / elapsed) * 1000)
+      } else finish(reject, new Error('empty probe'))
+    })
+    req.on('error', (e) => finish(reject, e))
   })
 }
 
@@ -258,7 +458,7 @@ async function saveLyric(musicInfo, audioRel) {
 }
 
 /** Queue lyric-only fill for library rows. */
-export function enqueueLyricFill(rows) {
+export function enqueueLyricFill(rows, { title } = {}) {
   const songs = (rows || []).map((row) => ({
     source: row.platform || row.source,
     platform: row.platform || row.source,
@@ -269,17 +469,22 @@ export function enqueueLyricFill(rows) {
     albumName: row.album,
     album: row.album,
   }))
-  return enqueueSongs(songs, { type: 'lyric_fill' })
+  return enqueueSongs(songs, { type: 'lyric_fill', title })
 }
 
-function downloadFile(url, dest, timeoutMs = config.downloadTimeoutMs) {
+function downloadFile(url, dest, { timeoutMs = config.downloadTimeoutMs, handle, itemId, enableSlowSwitch = false } = {}) {
   const ms = Number(timeoutMs) || 5 * 60 * 1000
   return new Promise((resolve, reject) => {
     let settled = false
+    let bytes = 0
+    const started = Date.now()
+    let slowTimer = null
+
     const fail = (err) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      if (slowTimer) clearTimeout(slowTimer)
       try {
         req.destroy()
       } catch {}
@@ -295,10 +500,24 @@ function downloadFile(url, dest, timeoutMs = config.downloadTimeoutMs) {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      if (slowTimer) clearTimeout(slowTimer)
       resolve()
     }
 
+    if (handle?.aborted || (itemId && isItemCancelled(itemId))) {
+      return fail(new Error('cancelled'))
+    }
+
     const timer = setTimeout(() => fail(new Error(`下载超时（${Math.round(ms / 1000)}s）`)), ms)
+    if (enableSlowSwitch) {
+      slowTimer = setTimeout(() => {
+        if (settled) return
+        if (bytes < SLOW_MIN_BYTES) {
+          fail(new Error(`下载过慢（${SLOW_CHECK_MS / 1000}s 仅 ${Math.round(bytes / 1024)}KB），切换音源`))
+        }
+      }, SLOW_CHECK_MS)
+    }
+
     const out = fs.createWriteStream(dest)
     const req = needle.get(url, {
       follow_max: 5,
@@ -310,9 +529,20 @@ function downloadFile(url, dest, timeoutMs = config.downloadTimeoutMs) {
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       },
     })
+    if (handle) {
+      handle.req = req
+      handle.out = out
+    }
+
     req.on('header', (statusCode) => {
       if (statusCode >= 400) {
         fail(new Error(`下载失败 HTTP ${statusCode}`))
+      }
+    })
+    req.on('data', (chunk) => {
+      bytes += chunk.length
+      if (handle?.aborted || (itemId && isItemCancelled(itemId))) {
+        fail(new Error('cancelled'))
       }
     })
     req.pipe(out)
@@ -343,14 +573,21 @@ function refreshJob(jobId) {
 export function getJob(id) {
   const job = jobsRepo.get(id)
   if (!job) return null
-  return { ...job, items: jobsRepo.listItems(id) }
+  const items = jobsRepo.listItems(id)
+  return { ...withJobTitle(job, items), items }
 }
 
 export function listJobs() {
-  return jobsRepo.list()
+  return jobsRepo.list().map((job) => withJobTitle(job, []))
 }
 
 export function cancelJob(id) {
+  const items = jobsRepo.listItems(id)
+  for (const it of items) {
+    if (['pending', 'running'].includes(it.status)) {
+      activeDownloads.get(it.id)?.abort()
+    }
+  }
   jobsRepo.cancelPendingItems(id)
   refreshJob(id)
   const job = jobsRepo.get(id)
@@ -358,6 +595,19 @@ export function cancelJob(id) {
     jobsRepo.update(id, { status: 'cancelled', message: 'cancelled by user' })
   }
   return getJob(id)
+}
+
+export function cancelJobItem(itemId) {
+  const item = jobsRepo.getItem(itemId)
+  if (!item) return null
+  if (!['pending', 'running'].includes(item.status)) {
+    return getJob(item.job_id)
+  }
+  activeDownloads.get(item.id)?.abort()
+  jobsRepo.updateItem(item.id, { status: 'cancelled', message: 'cancelled by user' })
+  refreshJob(item.job_id)
+  schedulePump()
+  return getJob(item.job_id)
 }
 
 export function retryJob(id) {
@@ -369,6 +619,8 @@ export function retryJob(id) {
 }
 
 export function deleteJob(id) {
+  const items = jobsRepo.listItems(id)
+  for (const it of items) activeDownloads.get(it.id)?.abort()
   jobsRepo.delete(id)
   return true
 }

@@ -214,6 +214,7 @@ function normalizeQuality(quality) {
  * 从支持的音质列表中选择最接近请求音质的实际可用音质
  */
 function selectQuality(requestedQuality, supportedQualities) {
+  if (requestedQuality === "24bit") return "24bit"; 
   const requested = String(requestedQuality || "128k").toLowerCase();
   if (supportedQualities.includes(requested)) return requested;
   const idx = QUALITY_PRIORITY.indexOf(requested);
