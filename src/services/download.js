@@ -22,12 +22,37 @@ let pumpScheduled = false
 
 /** itemId -> { aborted, abort(), destroy() } */
 const activeDownloads = new Map()
+/** itemId -> { bytes, total, speed, pct } live download progress */
+const itemProgress = new Map()
 
 const SLOW_CHECK_MS = 12_000
 const SLOW_MIN_BYTES = 200 * 1024 // ~17KB/s average
 const PROBE_BYTES = 48 * 1024
 const PROBE_TIMEOUT_MS = 8_000
 const MAX_CANDIDATES = 4
+const PROGRESS_FLUSH_MS = 400
+
+function setItemProgress(itemId, data) {
+  if (!itemId) return
+  itemProgress.set(Number(itemId), {
+    bytes: data.bytes || 0,
+    total: data.total || 0,
+    speed: data.speed || 0,
+    pct: data.pct ?? null,
+  })
+}
+
+function clearItemProgress(itemId) {
+  if (itemId == null) return
+  itemProgress.delete(Number(itemId))
+}
+
+function withItemProgress(item) {
+  if (!item) return item
+  const p = itemProgress.get(Number(item.id))
+  if (!p) return item
+  return { ...item, bytes_done: p.bytes, bytes_total: p.total, speed: p.speed, progress_pct: p.pct }
+}
 
 function songLabel(song) {
   if (!song || typeof song !== 'object') return ''
@@ -179,6 +204,7 @@ async function pump() {
         }
       })
       .finally(() => {
+        clearItemProgress(item.id)
         activeDownloads.delete(item.id)
         running--
         refreshJob(item.job_id)
@@ -509,19 +535,48 @@ export function enqueueLyricFill(rows, { title } = {}) {
   return enqueueSongs(songs, { type: 'lyric_fill', title })
 }
 
+function formatBytes(n) {
+  const v = Number(n) || 0
+  if (v < 1024) return `${v} B`
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`
+  return `${(v / (1024 * 1024)).toFixed(1)} MB`
+}
+
 function downloadFile(url, dest, { timeoutMs = config.downloadTimeoutMs, handle, itemId, enableSlowSwitch = false } = {}) {
   const ms = Number(timeoutMs) || 5 * 60 * 1000
   return new Promise((resolve, reject) => {
     let settled = false
     let bytes = 0
+    let total = 0
     const started = Date.now()
     let slowTimer = null
+    let lastFlush = 0
+
+    const flushProgress = (force = false) => {
+      if (!itemId) return
+      const now = Date.now()
+      if (!force && now - lastFlush < PROGRESS_FLUSH_MS) return
+      lastFlush = now
+      const elapsed = Math.max(now - started, 1)
+      const speed = (bytes / elapsed) * 1000
+      const pct = total > 0 ? Math.min(99, Math.round((bytes / total) * 100)) : null
+      setItemProgress(itemId, { bytes, total, speed, pct })
+      const speedLabel = formatSpeed(speed)
+      const msg =
+        total > 0
+          ? `下载中 ${pct}% · ${formatBytes(bytes)}/${formatBytes(total)} · ${speedLabel}`
+          : `下载中 ${formatBytes(bytes)} · ${speedLabel}`
+      try {
+        jobsRepo.updateItem(itemId, { message: msg })
+      } catch {}
+    }
 
     const fail = (err) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       if (slowTimer) clearTimeout(slowTimer)
+      clearItemProgress(itemId)
       try {
         req.destroy()
       } catch {}
@@ -538,6 +593,9 @@ function downloadFile(url, dest, { timeoutMs = config.downloadTimeoutMs, handle,
       settled = true
       clearTimeout(timer)
       if (slowTimer) clearTimeout(slowTimer)
+      if (itemId && total > 0) {
+        setItemProgress(itemId, { bytes: total || bytes, total, speed: 0, pct: 100 })
+      }
       resolve()
     }
 
@@ -571,16 +629,23 @@ function downloadFile(url, dest, { timeoutMs = config.downloadTimeoutMs, handle,
       handle.out = out
     }
 
-    req.on('header', (statusCode) => {
+    req.on('header', (statusCode, headers) => {
       if (statusCode >= 400) {
         fail(new Error(`下载失败 HTTP ${statusCode}`))
+        return
       }
+      const raw = headers?.['content-length'] || headers?.['Content-Length']
+      const n = Number(raw)
+      if (Number.isFinite(n) && n > 0) total = n
+      flushProgress(true)
     })
     req.on('data', (chunk) => {
       bytes += chunk.length
       if (handle?.aborted || (itemId && isItemCancelled(itemId))) {
         fail(new Error('cancelled'))
+        return
       }
+      flushProgress(false)
     })
     req.pipe(out)
     out.on('finish', done)
@@ -610,7 +675,7 @@ function refreshJob(jobId) {
 export function getJob(id) {
   const job = jobsRepo.get(id)
   if (!job) return null
-  const items = jobsRepo.listItems(id)
+  const items = jobsRepo.listItems(id).map(withItemProgress)
   return { ...withJobTitle(job, items), items }
 }
 

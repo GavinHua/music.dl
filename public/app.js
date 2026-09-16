@@ -608,15 +608,28 @@ $('#btn-board-load').addEventListener('click', loadBoards)
 $('#board-source').addEventListener('change', loadBoards)
 
 // ---- jobs ----
+let jobsRefreshGen = 0
+/** `${jobId}:${sec}` -> collapsed */
+const jobSecCollapse = Object.create(null)
+
 function startJobsAuto() {
   stopJobsAuto()
   if ($('#jobs-auto')?.checked) {
-    jobsTimer = setInterval(loadJobs, 2500)
+    jobsTimer = setInterval(() => loadJobs({ soft: true }), jobsPollMs())
   }
 }
 function stopJobsAuto() {
   if (jobsTimer) clearInterval(jobsTimer)
   jobsTimer = null
+}
+function jobsPollMs() {
+  const hasRunning = [...$$('#jobs-result .job-card')].some((el) =>
+    /running|pending/.test(el.dataset.status || '')
+  )
+  return hasRunning || openJobId ? 1000 : 2500
+}
+function rescheduleJobsAuto() {
+  if ($('#jobs-auto')?.checked) startJobsAuto()
 }
 $('#jobs-auto')?.addEventListener('change', () => {
   if ($('#jobs-auto').checked) startJobsAuto()
@@ -631,19 +644,75 @@ function clearJobDetail() {
   openJobId = null
   $$('#jobs-result .job-detail-box').forEach((el) => el.remove())
   $$('#jobs-result .job-card.open').forEach((el) => el.classList.remove('open'))
-  $$('#jobs-result .btn-job-detail').forEach((btn) => btn.setAttribute('aria-expanded', 'false'))
+  $$('#jobs-result .btn-job-detail').forEach((btn) => {
+    btn.setAttribute('aria-expanded', 'false')
+    btn.textContent = '详情'
+  })
 }
 
 function statusBadge(status) {
-  return `<span class="badge status-${escapeHtml(status || '')}">${escapeHtml(status || '')}</span>`
+  const map = {
+    pending: '等待',
+    running: '下载中',
+    done: '完成',
+    skipped: '跳过',
+    failed: '失败',
+    cancelled: '取消',
+  }
+  const label = map[status] || status || ''
+  return `<span class="badge status-${escapeHtml(status || '')}">${escapeHtml(label)}</span>`
+}
+
+function itemGroup(status) {
+  if (status === 'running' || status === 'pending') return 'active'
+  if (status === 'failed' || status === 'cancelled') return 'failed'
+  return 'done'
+}
+
+function itemProgressPct(i) {
+  if (i.progress_pct != null && Number.isFinite(Number(i.progress_pct))) return Math.max(0, Math.min(100, Number(i.progress_pct)))
+  if (i.bytes_total > 0 && i.bytes_done != null) {
+    return Math.max(0, Math.min(100, Math.round((Number(i.bytes_done) / Number(i.bytes_total)) * 100)))
+  }
+  const m = String(i.message || '').match(/(\d+)\s*%/)
+  return m ? Number(m[1]) : null
+}
+
+function formatItemBytes(n) {
+  const v = Number(n) || 0
+  if (v < 1024) return `${v} B`
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`
+  return `${(v / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function jobItemSubText(i) {
+  const pct = itemProgressPct(i)
+  const parts = []
+  if (i.status === 'running' && (i.bytes_done || pct != null)) {
+    if (pct != null && i.bytes_total > 0) {
+      parts.push(`${pct}% · ${formatItemBytes(i.bytes_done)}/${formatItemBytes(i.bytes_total)}`)
+    } else if (i.bytes_done) {
+      parts.push(formatItemBytes(i.bytes_done))
+    }
+    if (i.speed > 0) parts.push(`${formatItemBytes(i.speed)}/s`)
+  }
+  if (i.message) parts.push(i.message)
+  else if (i.file_path) parts.push(i.file_path)
+  return parts.join(' · ')
 }
 
 function jobItemRowHtml(i) {
   const canCancel = ['pending', 'running'].includes(i.status)
-  return `<div class="job-item-row" data-item-id="${i.id}">
+  const pct = itemProgressPct(i)
+  const showBar = i.status === 'running' || (i.status === 'pending' && pct != null)
+  const barPct = i.status === 'pending' ? 0 : pct != null ? pct : 8
+  return `<div class="job-item-row" data-item-id="${i.id}" data-status="${escapeAttr(i.status || '')}">
     <div class="meta">
       <div class="title">${statusBadge(i.status)} ${escapeHtml(i.name || '')} · ${escapeHtml(i.singer || '')}</div>
-      <div class="sub">${escapeHtml(i.message || '')}${i.file_path ? ` · ${escapeHtml(i.file_path)}` : ''}</div>
+      <div class="sub">${escapeHtml(jobItemSubText(i))}</div>
+      <div class="job-item-bar${showBar ? ' is-on' : ''}" ${showBar ? '' : 'hidden'}>
+        <div class="job-item-bar-fill${pct == null && i.status === 'running' ? ' is-indeterminate' : ''}" style="width:${barPct}%"></div>
+      </div>
     </div>
     <div class="actions">
       ${canCancel ? `<button type="button" class="btn-item-cancel" data-item-id="${i.id}">取消</button>` : ''}
@@ -668,47 +737,140 @@ function bindJobItemCancels(scope) {
   })
 }
 
+function ensureJobDetailStructure(box) {
+  if (box.dataset.ready === '1') return
+  const labels = {
+    active: '下载中',
+    done: '已完成',
+    failed: '失败 / 取消',
+  }
+  box.innerHTML = ['active', 'done', 'failed']
+    .map(
+      (key) => `<div class="job-sec" data-sec="${key}" hidden>
+      <button type="button" class="job-sec-head" aria-expanded="true">
+        <span class="job-sec-chevron" aria-hidden="true">▾</span>
+        <span class="job-sec-label">${labels[key]}</span>
+        <span class="job-sec-count">0</span>
+      </button>
+      <div class="job-sec-list" data-list="${key}"></div>
+    </div>`
+    )
+    .join('')
+  box.dataset.ready = '1'
+  box.querySelectorAll('.job-sec-head').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const sec = btn.closest('.job-sec')
+      if (!sec) return
+      const collapsed = sec.classList.toggle('is-collapsed')
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
+      const jobId = String(openJobId || '')
+      const key = sec.dataset.sec
+      if (jobId && key) {
+        jobSecCollapse[`${jobId}:${key}`] = collapsed
+      }
+    })
+  })
+}
+
+function applyJobSecCollapse(box) {
+  const jobId = String(openJobId || '')
+  box.querySelectorAll('.job-sec').forEach((sec) => {
+    const key = sec.dataset.sec
+    const stored = jobSecCollapse[`${jobId}:${key}`]
+    const collapsed = stored === true
+    sec.classList.toggle('is-collapsed', collapsed)
+    const head = sec.querySelector('.job-sec-head')
+    if (head) head.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
+  })
+}
+
+function patchOneJobItemRow(row, i) {
+  const title = row.querySelector('.title')
+  const sub = row.querySelector('.sub')
+  const bar = row.querySelector('.job-item-bar')
+  const fill = row.querySelector('.job-item-bar-fill')
+  const nextTitle = `${i.status}|${i.name || ''}|${i.singer || ''}`
+  const nextSub = jobItemSubText(i)
+  const pct = itemProgressPct(i)
+  const showBar = i.status === 'running' || (i.status === 'pending' && pct != null)
+  const barPct = i.status === 'pending' ? 0 : pct != null ? pct : 8
+  const barSig = `${showBar}|${pct}|${i.status}`
+
+  if (title && title.dataset.sig !== nextTitle) {
+    title.innerHTML = `${statusBadge(i.status)} ${escapeHtml(i.name || '')} · ${escapeHtml(i.singer || '')}`
+    title.dataset.sig = nextTitle
+  }
+  if (sub && sub.dataset.sig !== nextSub) {
+    sub.textContent = nextSub
+    sub.dataset.sig = nextSub
+  }
+  if (bar && bar.dataset.sig !== barSig) {
+    bar.hidden = !showBar
+    bar.classList.toggle('is-on', showBar)
+    if (fill) {
+      fill.style.width = `${barPct}%`
+      fill.classList.toggle('is-indeterminate', pct == null && i.status === 'running')
+    }
+    bar.dataset.sig = barSig
+  } else if (fill && showBar && pct != null) {
+    fill.style.width = `${pct}%`
+  }
+
+  row.dataset.status = i.status || ''
+  const actions = row.querySelector('.actions')
+  const canCancel = ['pending', 'running'].includes(i.status)
+  const hasBtn = !!row.querySelector('.btn-item-cancel')
+  if (canCancel && !hasBtn) {
+    actions.innerHTML = `<button type="button" class="btn-item-cancel" data-item-id="${i.id}">取消</button>`
+  } else if (!canCancel && hasBtn) {
+    actions.innerHTML = ''
+  }
+}
+
 function patchJobItemRows(box, items) {
   const scrollTop = box.scrollTop
+  ensureJobDetailStructure(box)
+  applyJobSecCollapse(box)
+  const lists = {
+    active: box.querySelector('[data-list="active"]'),
+    done: box.querySelector('[data-list="done"]'),
+    failed: box.querySelector('[data-list="failed"]'),
+  }
   const existing = new Map([...box.querySelectorAll('.job-item-row')].map((el) => [el.dataset.itemId, el]))
   const seen = new Set()
+  const counts = { active: 0, done: 0, failed: 0 }
+
   for (const i of items) {
     const id = String(i.id)
+    const group = itemGroup(i.status)
+    counts[group]++
     seen.add(id)
     let row = existing.get(id)
+    const parent = lists[group]
     if (!row) {
       const wrap = document.createElement('div')
       wrap.innerHTML = jobItemRowHtml(i)
       row = wrap.firstElementChild
-      box.appendChild(row)
+      parent.appendChild(row)
     } else {
-      const title = row.querySelector('.title')
-      const sub = row.querySelector('.sub')
-      const nextTitle = `${i.status} ${i.name || ''} · ${i.singer || ''}`
-      const nextSub = `${i.message || ''}${i.file_path ? ` · ${i.file_path}` : ''}`
-      // update via html for badge
-      const wantTitle = `${statusBadge(i.status)} ${escapeHtml(i.name || '')} · ${escapeHtml(i.singer || '')}`
-      if (title && title.dataset.sig !== nextTitle) {
-        title.innerHTML = wantTitle
-        title.dataset.sig = nextTitle
-      }
-      if (sub && sub.dataset.sig !== nextSub) {
-        sub.textContent = nextSub
-        sub.dataset.sig = nextSub
-      }
-      const actions = row.querySelector('.actions')
-      const canCancel = ['pending', 'running'].includes(i.status)
-      const hasBtn = !!row.querySelector('.btn-item-cancel')
-      if (canCancel && !hasBtn) {
-        actions.innerHTML = `<button type="button" class="btn-item-cancel" data-item-id="${i.id}">取消</button>`
-      } else if (!canCancel && hasBtn) {
-        actions.innerHTML = ''
-      }
+      if (row.parentElement !== parent) parent.appendChild(row)
+      patchOneJobItemRow(row, i)
     }
   }
+
   for (const [id, el] of existing) {
     if (!seen.has(id)) el.remove()
   }
+
+  for (const key of ['active', 'done', 'failed']) {
+    const sec = box.querySelector(`[data-sec="${key}"]`)
+    if (!sec) continue
+    const countEl = sec.querySelector('.job-sec-count')
+    if (countEl) countEl.textContent = String(counts[key])
+    // 无条目时整块隐藏，避免「暂无进行中」闪烁
+    sec.hidden = counts[key] === 0
+  }
+
   bindJobItemCancels(box)
   box.scrollTop = scrollTop
 }
@@ -756,6 +918,29 @@ function renderJobCardHtml(j, isOpen) {
   </div>`
 }
 
+function syncJobCardActions(card, j, isOpen) {
+  const actions = card.querySelector('.job-card-row .actions')
+  if (!actions) return
+  const canRetry = ['failed', 'cancelled', 'completed'].includes(j.status)
+  const canCancel = ['running', 'pending'].includes(j.status)
+  const want = `${canCancel ? 1 : 0}|${canRetry ? 1 : 0}|${isOpen ? 1 : 0}`
+  if (actions.dataset.sig === want) {
+    const detailBtn = actions.querySelector('.btn-job-detail')
+    if (detailBtn) {
+      detailBtn.textContent = isOpen ? '收起' : '详情'
+      detailBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false')
+    }
+    return
+  }
+  actions.innerHTML = `
+    <button type="button" data-id="${j.id}" class="btn-job-detail" aria-expanded="${isOpen ? 'true' : 'false'}">${isOpen ? '收起' : '详情'}</button>
+    ${canCancel ? `<button type="button" data-id="${j.id}" class="btn-job-cancel">全部取消</button>` : ''}
+    ${canRetry ? `<button type="button" data-id="${j.id}" class="btn-job-retry">重试失败</button>` : ''}
+    <button type="button" data-id="${j.id}" class="btn-job-del">删除</button>`
+  actions.dataset.sig = want
+  bindJobCardActions(card)
+}
+
 function bindJobCardActions(root = $('#jobs-result')) {
   root.querySelectorAll('.btn-job-detail').forEach((btn) => {
     if (btn.dataset.bound) return
@@ -764,7 +949,6 @@ function bindJobCardActions(root = $('#jobs-result')) {
       const id = btn.dataset.id
       if (String(openJobId) === String(id)) {
         clearJobDetail()
-        btn.textContent = '详情'
         return
       }
       openJobId = id
@@ -780,6 +964,7 @@ function bindJobCardActions(root = $('#jobs-result')) {
       })
       btn.textContent = '收起'
       await patchJobDetail(id)
+      rescheduleJobsAuto()
     })
   })
   root.querySelectorAll('.btn-job-cancel').forEach((btn) => {
@@ -824,21 +1009,78 @@ function bindJobCardActions(root = $('#jobs-result')) {
   })
 }
 
+function softPatchJobCards(list) {
+  const box = $('#jobs-result')
+  const existing = new Map([...box.querySelectorAll('.job-card')].map((el) => [el.dataset.id, el]))
+  const seen = new Set()
+
+  if (!list.length) {
+    if (!box.querySelector('.empty')) box.innerHTML = emptyHtml('暂无任务')
+    return
+  }
+  box.querySelector('.empty')?.remove()
+
+  let prev = null
+  for (const j of list) {
+    const id = String(j.id)
+    seen.add(id)
+    const isOpen = String(openJobId) === id
+    let card = existing.get(id)
+    if (!card) {
+      const wrap = document.createElement('div')
+      wrap.innerHTML = `<div class="item job-card${isOpen ? ' open' : ''}" data-id="${j.id}" data-status="${escapeAttr(j.status || '')}">
+        ${renderJobCardHtml(j, isOpen)}
+        ${isOpen ? `<div class="job-detail-box"></div>` : ''}
+      </div>`
+      card = wrap.firstElementChild
+      bindJobCardActions(card)
+    }
+
+    if (!prev) {
+      if (box.firstChild !== card) box.insertBefore(card, box.firstChild)
+    } else if (prev.nextSibling !== card) {
+      prev.after(card)
+    }
+
+    const pct = j.total ? Math.round((j.progress / j.total) * 100) : 0
+    const title = card.querySelector('.job-card-row .title')
+    const sub = card.querySelector('.job-progress')
+    const sig = `${j.status}|${j.progress}|${j.total}|${j.message || ''}|${jobDisplayTitle(j)}`
+    if (card.dataset.sig !== sig) {
+      if (title) title.innerHTML = `#${j.id} ${escapeHtml(jobDisplayTitle(j))} ${statusBadge(j.status)}`
+      if (sub) sub.textContent = `${j.progress}/${j.total}（${pct}%） · ${j.message || ''}`
+      card.dataset.sig = sig
+    }
+    syncJobCardActions(card, j, isOpen)
+    card.dataset.status = j.status || ''
+    card.classList.toggle('open', isOpen)
+    if (!isOpen) card.querySelector('.job-detail-box')?.remove()
+    prev = card
+  }
+
+  for (const [id, el] of existing) {
+    if (!seen.has(id)) {
+      if (String(openJobId) === id) openJobId = null
+      el.remove()
+    }
+  }
+}
+
 async function loadJobs({ soft = true } = {}) {
+  const gen = ++jobsRefreshGen
   try {
     const data = await api('/jobs')
+    if (gen !== jobsRefreshGen) return
     const list = data.list || []
     const box = $('#jobs-result')
-    const existingIds = [...box.querySelectorAll('.job-card')].map((el) => el.dataset.id)
-    const nextIds = list.map((j) => String(j.id))
-    const sameShape = soft && existingIds.length === nextIds.length && existingIds.every((id, i) => id === nextIds[i])
 
-    if (!sameShape) {
+    if (!soft) {
+      const openId = openJobId
       box.innerHTML =
         list
           .map((j) => {
-            const isOpen = String(openJobId) === String(j.id)
-            return `<div class="item job-card${isOpen ? ' open' : ''}" data-id="${j.id}">
+            const isOpen = String(openId) === String(j.id)
+            return `<div class="item job-card${isOpen ? ' open' : ''}" data-id="${j.id}" data-status="${escapeAttr(j.status || '')}">
               ${renderJobCardHtml(j, isOpen)}
               ${isOpen ? `<div class="job-detail-box"></div>` : ''}
             </div>`
@@ -846,37 +1088,13 @@ async function loadJobs({ soft = true } = {}) {
           .join('') || emptyHtml('暂无任务')
       bindJobCardActions(box)
     } else {
-      for (const j of list) {
-        const card = jobCardEl(j.id)
-        if (!card) continue
-        const isOpen = String(openJobId) === String(j.id)
-        const pct = j.total ? Math.round((j.progress / j.total) * 100) : 0
-        const title = card.querySelector('.title')
-        const sub = card.querySelector('.job-progress')
-        const sig = `${j.status}|${j.progress}|${j.total}|${j.message || ''}|${jobDisplayTitle(j)}`
-        if (card.dataset.sig !== sig) {
-          if (title) title.innerHTML = `#${j.id} ${escapeHtml(jobDisplayTitle(j))} ${statusBadge(j.status)}`
-          if (sub) sub.textContent = `${j.progress}/${j.total}（${pct}%） · ${j.message || ''}`
-          card.dataset.sig = sig
-          // refresh action buttons when status changes
-          const actions = card.querySelector('.job-card-row .actions')
-          if (actions) {
-            const canRetry = ['failed', 'cancelled', 'completed'].includes(j.status)
-            const canCancel = ['running', 'pending'].includes(j.status)
-            actions.innerHTML = `
-              <button type="button" data-id="${j.id}" class="btn-job-detail" aria-expanded="${isOpen ? 'true' : 'false'}">${isOpen ? '收起' : '详情'}</button>
-              ${canCancel ? `<button type="button" data-id="${j.id}" class="btn-job-cancel">全部取消</button>` : ''}
-              ${canRetry ? `<button type="button" data-id="${j.id}" class="btn-job-retry">重试失败</button>` : ''}
-              <button type="button" data-id="${j.id}" class="btn-job-del">删除</button>`
-            bindJobCardActions(card)
-          }
-        }
-      }
+      softPatchJobCards(list)
     }
 
-    if (openJobId) await patchJobDetail(openJobId)
+    if (openJobId && gen === jobsRefreshGen) await patchJobDetail(openJobId)
+    if (gen === jobsRefreshGen) rescheduleJobsAuto()
   } catch (e) {
-    toast(e.message)
+    if (gen === jobsRefreshGen) toast(e.message)
   }
 }
 $('#btn-jobs-refresh').addEventListener('click', () => loadJobs({ soft: false }))
