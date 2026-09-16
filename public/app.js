@@ -3,6 +3,7 @@ const $$ = (s) => [...document.querySelectorAll(s)]
 
 let jobsTimer = null
 let openJobId = null
+let openJobHtml = ''
 let currentPlaylist = { source: '', id: '' }
 let detailSongs = []
 let missingLyricTracks = []
@@ -554,24 +555,53 @@ $('#jobs-auto')?.addEventListener('change', () => {
   else stopJobsAuto()
 })
 
+function jobCardEl(id) {
+  return $(`#jobs-result .job-card[data-id="${id}"]`)
+}
+
 function clearJobDetail() {
   openJobId = null
-  $('#job-detail').innerHTML = ''
+  openJobHtml = ''
+  $$('#jobs-result .job-detail-box').forEach((el) => el.remove())
+  $$('#jobs-result .job-card.open').forEach((el) => el.classList.remove('open'))
+  $$('#jobs-result .btn-job-detail').forEach((btn) => btn.setAttribute('aria-expanded', 'false'))
+}
+
+function jobDetailHtml(job) {
+  const items = (job.items || [])
+    .map((i) => `${padStatus(i.status)} | ${i.name} - ${i.singer}\n    ${i.message || ''} ${i.file_path || ''}`)
+    .join('\n')
+  return `<b>任务 #${job.id}</b> · ${escapeHtml(job.status || '')} · ${job.progress || 0}/${job.total || 0}\n${items || '无条目'}`
 }
 
 async function loadJobDetail(id, { keepScroll = true, notify = false } = {}) {
   if (!id) return
-  const box = $('#job-detail .job-detail-box')
+  const card = jobCardEl(id)
+  if (!card) {
+    clearJobDetail()
+    return
+  }
+  let box = card.querySelector('.job-detail-box')
   const scrollTop = keepScroll && box ? box.scrollTop : 0
   try {
     const job = await api(`/jobs/${id}`)
     if (String(openJobId) !== String(id)) return
-    const items = (job.items || [])
-      .map((i) => `${padStatus(i.status)} | ${i.name} - ${i.singer}\n    ${i.message || ''} ${i.file_path || ''}`)
-      .join('\n')
-    $('#job-detail').innerHTML = `<div class="job-detail-box"><b>任务 #${job.id}</b> · ${escapeHtml(job.status || '')} · ${job.progress || 0}/${job.total || 0}\n${items || '无条目'}</div>`
-    const next = $('#job-detail .job-detail-box')
-    if (next && keepScroll) next.scrollTop = scrollTop
+    $$('#jobs-result .job-card').forEach((el) => {
+      if (el === card) return
+      el.classList.remove('open')
+      el.querySelector('.job-detail-box')?.remove()
+      el.querySelector('.btn-job-detail')?.setAttribute('aria-expanded', 'false')
+    })
+    card.classList.add('open')
+    card.querySelector('.btn-job-detail')?.setAttribute('aria-expanded', 'true')
+    if (!box) {
+      box = document.createElement('div')
+      box.className = 'job-detail-box'
+      card.appendChild(box)
+    }
+    box.innerHTML = jobDetailHtml(job)
+    openJobHtml = box.innerHTML
+    if (keepScroll) box.scrollTop = scrollTop
   } catch (e) {
     if (String(openJobId) !== String(id)) return
     clearJobDetail()
@@ -581,6 +611,8 @@ async function loadJobDetail(id, { keepScroll = true, notify = false } = {}) {
 
 async function loadJobs() {
   try {
+    const openBox = $('#jobs-result .job-card.open .job-detail-box')
+    const scrollTop = openBox?.scrollTop || 0
     const data = await api('/jobs')
     $('#jobs-result').innerHTML =
       (data.list || [])
@@ -588,26 +620,34 @@ async function loadJobs() {
           const canRetry = ['failed', 'cancelled', 'completed'].includes(j.status)
           const canCancel = ['running', 'pending'].includes(j.status)
           const pct = j.total ? Math.round((j.progress / j.total) * 100) : 0
-          const open = String(openJobId) === String(j.id) ? ' open' : ''
-          return `<div class="item${open}">
-          <div class="meta">
-            <div class="title">#${j.id} ${escapeHtml(j.type)} <span class="badge status-${escapeHtml(j.status)}">${escapeHtml(j.status)}</span></div>
-            <div class="sub">${j.progress}/${j.total}（${pct}%） · ${escapeHtml(j.message || '')}</div>
+          const isOpen = String(openJobId) === String(j.id)
+          return `<div class="item job-card${isOpen ? ' open' : ''}" data-id="${j.id}">
+          <div class="job-card-row">
+            <div class="meta">
+              <div class="title">#${j.id} ${escapeHtml(j.type)} <span class="badge status-${escapeHtml(j.status)}">${escapeHtml(j.status)}</span></div>
+              <div class="sub">${j.progress}/${j.total}（${pct}%） · ${escapeHtml(j.message || '')}</div>
+            </div>
+            <div class="actions">
+              <button type="button" data-id="${j.id}" class="btn-job-detail" aria-expanded="${isOpen ? 'true' : 'false'}">详情</button>
+              ${canCancel ? `<button type="button" data-id="${j.id}" class="btn-job-cancel">取消</button>` : ''}
+              ${canRetry ? `<button type="button" data-id="${j.id}" class="btn-job-retry">重试失败</button>` : ''}
+              <button type="button" data-id="${j.id}" class="btn-job-del">删除</button>
+            </div>
           </div>
-          <div class="actions">
-            <button type="button" data-id="${j.id}" class="btn-job-detail">详情</button>
-            ${canCancel ? `<button type="button" data-id="${j.id}" class="btn-job-cancel">取消</button>` : ''}
-            ${canRetry ? `<button type="button" data-id="${j.id}" class="btn-job-retry">重试失败</button>` : ''}
-            <button type="button" data-id="${j.id}" class="btn-job-del">删除</button>
-          </div>
+          ${isOpen ? `<div class="job-detail-box">${openJobHtml || '加载中…'}</div>` : ''}
         </div>`
         })
         .join('') || emptyHtml('暂无任务')
 
     $$('.btn-job-detail').forEach((btn) => {
       btn.addEventListener('click', async () => {
-        openJobId = btn.dataset.id
-        await loadJobDetail(openJobId, { keepScroll: false, notify: true })
+        const id = btn.dataset.id
+        if (String(openJobId) === String(id)) {
+          clearJobDetail()
+          return
+        }
+        openJobId = id
+        await loadJobDetail(id, { keepScroll: false, notify: true })
       })
     })
     $$('.btn-job-cancel').forEach((btn) => {
@@ -644,7 +684,11 @@ async function loadJobs() {
         }
       })
     })
-    if (openJobId) await loadJobDetail(openJobId)
+    if (openJobId) {
+      await loadJobDetail(openJobId)
+      const next = $('#jobs-result .job-card.open .job-detail-box')
+      if (next) next.scrollTop = scrollTop
+    }
   } catch (e) {
     toast(e.message)
   }

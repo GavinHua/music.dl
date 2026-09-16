@@ -574,12 +574,26 @@ button.ghost:hover { background: var(--accent-soft); color: var(--accent); }
   background: rgba(255, 252, 245, 0.4);
 }
 
+.job-card {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+.job-card-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.job-card.open {
+  border-color: rgba(15, 122, 95, 0.4);
+}
 .job-detail-box {
-  margin-top: 4px;
+  margin: 0;
   padding: 14px;
   background: #101f1a;
   color: #d7e4dd;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   max-height: 320px;
@@ -746,12 +760,16 @@ button.ghost:hover { background: var(--accent-soft); color: var(--accent); }
   .sticky-bar { top: var(--top-h); }
   .hide-sm { display: inline; }
   .item .actions { max-width: none; }
+  .job-card-row .actions { max-width: none; }
   .chips { flex-wrap: wrap; overflow: visible; }
   #toast { bottom: 28px; }
 }
 
 @media (max-width: 859px) {
   .item {
+    flex-direction: column;
+  }
+  .job-card-row {
     flex-direction: column;
   }
   .item .actions {
